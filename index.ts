@@ -1,21 +1,38 @@
-import * as express from "express";
-import * as path from "path";
+import express from 'express';
+import mongoose from 'mongoose';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import swaggerUi from 'swagger-ui-express';
+import authRoutes from './src/routes/authRoutes';
+import { swaggerSpec } from './src/config/swagger';
+
+dotenv.config();
 
 const app = express();
-const port = parseInt(process.env.PORT) || process.argv[3] || 8080;
 
-app.use(express.static(path.join(__dirname, 'public')))
-  .set('views', path.join(__dirname, 'views'))
-  .set('view engine', 'ejs');
+// Middleware
+app.use(cors());
+app.use(express.json());
 
-app.get('/', (req, res) => {
-  res.render('index');
+// Swagger UI
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
+// Подключение к MongoDB
+mongoose.connect(process.env.MONGODB_URI!)
+  .then(() => console.log('Connected to MongoDB'))
+  .catch((error) => console.error('MongoDB connection error:', error));
+
+// Маршруты
+app.use('/api/auth', authRoutes);
+
+// Обработка ошибок
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error(err.stack);
+  res.status(500).json({ message: 'Что-то пошло не так!' });
 });
 
-app.get('/api', (req, res) => {
-  res.json({"msg": "Hello world"});
-});
-
-app.listen(port, () => {
-  console.log(`Listening on http://localhost:${port}`);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+  console.log(`Swagger UI available at http://localhost:${PORT}/api-docs`);
 });
