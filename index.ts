@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import swaggerUi from 'swagger-ui-express';
+import path from 'path';
 import authRoutes from './src/routes/authRoutes';
 import { swaggerSpec } from './src/config/swagger';
 
@@ -15,7 +16,11 @@ app.use(cors());
 app.use(express.json());
 
 // Swagger UI
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: "VCL API Documentation",
+  customfavIcon: "/favicon.ico"
+}));
 
 // Подключение к MongoDB
 mongoose.connect(process.env.MONGODB_URI!)
