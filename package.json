@@ -6,7 +6,11 @@
   "scripts": {
     "start": "ts-node index.ts",
     "dev": "nodemon index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "vercel-build": "tsc"
+  },
+  "engines": {
+    "node": ">=14.0.0"
   },
   "keywords": [],
   "author": "",
