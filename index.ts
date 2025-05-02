@@ -18,22 +18,17 @@ app.use(express.json());
 // Swagger UI
 const swaggerOptions = {
   explorer: true,
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: "VCL API Documentation",
   swaggerOptions: {
-    urls: [
-      {
-        url: '/swagger.json',
-        name: 'VCL API'
-      }
-    ]
+    persistAuthorization: true,
+    displayRequestDuration: true,
   }
 };
 
-app.get('/swagger.json', (req, res) => {
-  res.setHeader('Content-Type', 'application/json');
-  res.send(swaggerSpec);
-});
-
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, swaggerOptions));
+// Обслуживание статических файлов Swagger
+app.use('/api-docs', swaggerUi.serve);
+app.get('/api-docs', swaggerUi.setup(swaggerSpec, swaggerOptions));
 
 // Подключение к MongoDB
 mongoose.connect(process.env.MONGODB_URI!)

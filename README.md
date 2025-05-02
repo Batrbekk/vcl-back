@@ -32,9 +32,17 @@ npm install
 
 3. Создайте файл .env в корне проекта:
 ```env
+# Основные настройки
 PORT=3000
+NODE_ENV=development # или production для продакшена
+
+# База данных
 MONGODB_URI=your_mongodb_uri
+
+# JWT
 JWT_SECRET=your_jwt_secret
+
+# Email
 EMAIL_USER=your_email
 EMAIL_PASS=your_email_password
 ```
@@ -65,6 +73,7 @@ npm start
 1. Убедитесь, что у вас есть аккаунт на Vercel
 2. Подключите ваш GitHub репозиторий
 3. Настройте переменные окружения в Vercel:
+   - NODE_ENV=production
    - MONGODB_URI
    - JWT_SECRET
    - EMAIL_USER
