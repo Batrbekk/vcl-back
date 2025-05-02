@@ -54,7 +54,7 @@ export const getManagerWelcomeEmailTemplate = (
         .button {
           display: inline-block;
           background-color: #9077FF;
-          color: #ffffff;
+          color: #ffffff!important;
           padding: 12px 24px;
           text-decoration: none;
           border-radius: 6px;
@@ -73,7 +73,7 @@ export const getManagerWelcomeEmailTemplate = (
     <body>
       <div class="container">
         <div class="header">
-          <img src="https://vcl-delta.vercel.app/logo.png" alt="VCL Logo">
+          <h2 style="color: #333;">Добро пожаловать в VCL!</h2>
           <h1 class="welcome">Добро пожаловать в команду!</h1>
         </div>
         
