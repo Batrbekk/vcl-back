@@ -1,20 +1,18 @@
 import mongoose, { Document, Schema } from 'mongoose';
 import bcrypt from 'bcryptjs';
 
-export interface IUser extends Document {
+export interface IManager extends Document {
   email: string;
   firstName: string;
   lastName: string;
   companyName: string;
   password: string;
-  isVerified: boolean;
-  verificationCode?: string;
-  resetPasswordCode?: string;
   role: string;
+  adminId: mongoose.Types.ObjectId;
   comparePassword(candidatePassword: string): Promise<boolean>;
 }
 
-const userSchema = new Schema<IUser>({
+const managerSchema = new Schema<IManager>({
   email: {
     type: String,
     required: true,
@@ -34,7 +32,6 @@ const userSchema = new Schema<IUser>({
   },
   companyName: {
     type: String,
-    required: true,
     trim: true
   },
   password: {
@@ -42,29 +39,22 @@ const userSchema = new Schema<IUser>({
     required: true,
     minlength: 6
   },
-  isVerified: {
-    type: Boolean,
-    default: false
-  },
-  verificationCode: {
-    type: String,
-    default: null
-  },
-  resetPasswordCode: {
-    type: String,
-    default: null
-  },
   role: {
     type: String,
-    default: 'admin',
-    enum: ['admin']
+    default: 'manager',
+    enum: ['manager']
+  },
+  adminId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
   }
 }, {
   timestamps: true
 });
 
 // Хеширование пароля перед сохранением
-userSchema.pre('save', async function(next) {
+managerSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
   
   try {
@@ -77,8 +67,8 @@ userSchema.pre('save', async function(next) {
 });
 
 // Метод для сравнения паролей
-userSchema.methods.comparePassword = async function(candidatePassword: string): Promise<boolean> {
+managerSchema.methods.comparePassword = async function(candidatePassword: string): Promise<boolean> {
   return bcrypt.compare(candidatePassword, this.password);
 };
 
-export const User = mongoose.model<IUser>('User', userSchema); 
+export const Manager = mongoose.model<IManager>('Manager', managerSchema); 

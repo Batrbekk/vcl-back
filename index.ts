@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import swaggerUi from 'swagger-ui-express';
 import path from 'path';
 import authRoutes from './src/routes/authRoutes';
+import managerRoutes from './src/routes/managerRoutes';
 import { swaggerSpec } from './src/config/swagger';
 
 dotenv.config();
@@ -37,6 +38,7 @@ mongoose.connect(process.env.MONGODB_URI!)
 
 // Маршруты
 app.use('/api/auth', authRoutes);
+app.use('/api/managers', managerRoutes);
 
 // Корневой маршрут
 app.get('/', (req, res) => {

@@ -14,8 +14,16 @@ const router = express.Router();
 
 /**
  * @swagger
+ * tags:
+ *   name: Auth
+ *   description: Маршруты аутентификации и авторизации
+ */
+
+/**
+ * @swagger
  * /api/auth/register:
  *   post:
+ *     tags: [Auth]
  *     summary: Регистрация нового пользователя
  *     description: Регистрация нового пользователя. После регистрации на email придет код подтверждения.
  *     requestBody:
@@ -62,8 +70,9 @@ router.post('/register', guestMiddleware, register);
  * @swagger
  * /api/auth/verify-email:
  *   post:
- *     summary: Подтверждение email или кода сброса пароля
- *     description: Подтверждение email при регистрации или кода для сброса пароля
+ *     tags: [Auth]
+ *     summary: Подтверждение email
+ *     description: Подтверждение email или кода сброса пароля
  *     requestBody:
  *       required: true
  *       content:
@@ -78,45 +87,18 @@ router.post('/register', guestMiddleware, register);
  *               email:
  *                 type: string
  *                 format: email
- *                 example: user@example.com
  *               code:
  *                 type: string
- *                 example: "123456"
  *               mode:
  *                 type: string
  *                 enum: [register, reset]
- *                 example: register
  *     responses:
  *       200:
- *         description: Код успешно подтвержден
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 message:
- *                   type: string
- *                   example: Email успешно подтвержден
+ *         description: Email успешно подтвержден
  *       400:
- *         description: Неверный код или режим
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 message:
- *                   type: string
- *                   example: Неверный код
+ *         description: Неверный код
  *       500:
  *         description: Внутренняя ошибка сервера
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 message:
- *                   type: string
- *                   example: Ошибка при подтверждении
  */
 router.post('/verify-email', guestMiddleware, verifyEmail);
 
@@ -124,8 +106,9 @@ router.post('/verify-email', guestMiddleware, verifyEmail);
  * @swagger
  * /api/auth/login:
  *   post:
+ *     tags: [Auth]
  *     summary: Вход в систему
- *     description: Вход в систему. Возвращает JWT токен для авторизации.
+ *     description: Вход в систему с получением JWT токена
  *     requestBody:
  *       required: true
  *       content:
@@ -139,16 +122,13 @@ router.post('/verify-email', guestMiddleware, verifyEmail);
  *               email:
  *                 type: string
  *                 format: email
- *                 example: user@example.com
  *               password:
  *                 type: string
- *                 format: password
- *                 example: password123
  *     responses:
  *       200:
  *         description: Успешный вход
  *       401:
- *         description: Ошибка авторизации
+ *         description: Неверные учетные данные
  *       500:
  *         description: Внутренняя ошибка сервера
  */
@@ -158,8 +138,9 @@ router.post('/login', guestMiddleware, login);
  * @swagger
  * /api/auth/send-code:
  *   post:
- *     summary: Отправка кода подтверждения или сброса пароля
- *     description: Отправка кода на email пользователя для подтверждения регистрации или сброса пароля
+ *     tags: [Auth]
+ *     summary: Отправка кода
+ *     description: Отправка кода подтверждения или сброса пароля
  *     requestBody:
  *       required: true
  *       content:
@@ -173,18 +154,14 @@ router.post('/login', guestMiddleware, login);
  *               email:
  *                 type: string
  *                 format: email
- *                 example: user@example.com
  *               mode:
  *                 type: string
  *                 enum: [register, reset]
- *                 example: register
  *     responses:
  *       200:
  *         description: Код отправлен
  *       400:
- *         description: Неверный режим или email уже подтвержден
- *       404:
- *         description: Пользователь не найден
+ *         description: Ошибка отправки кода
  *       500:
  *         description: Внутренняя ошибка сервера
  */
@@ -194,8 +171,9 @@ router.post('/send-code', guestMiddleware, sendCode);
  * @swagger
  * /api/auth/reset-password:
  *   post:
+ *     tags: [Auth]
  *     summary: Сброс пароля
- *     description: Сброс пароля после подтверждения кода
+ *     description: Сброс пароля пользователя
  *     requestBody:
  *       required: true
  *       content:
@@ -209,52 +187,15 @@ router.post('/send-code', guestMiddleware, sendCode);
  *               email:
  *                 type: string
  *                 format: email
- *                 example: user@example.com
  *               newPassword:
  *                 type: string
- *                 format: password
- *                 example: newpassword123
  *     responses:
  *       200:
- *         description: Пароль успешно изменен
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 message:
- *                   type: string
- *                   example: Пароль успешно изменен
+ *         description: Пароль успешно сброшен
  *       400:
- *         description: Необходимо подтвердить код сброса пароля
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 message:
- *                   type: string
- *                   example: Сначала подтвердите код сброса пароля
- *       404:
- *         description: Пользователь не найден
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 message:
- *                   type: string
- *                   example: Пользователь не найден
+ *         description: Ошибка сброса пароля
  *       500:
  *         description: Внутренняя ошибка сервера
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 message:
- *                   type: string
- *                   example: Ошибка при сбросе пароля
  */
 router.post('/reset-password', guestMiddleware, resetPassword);
 
@@ -262,17 +203,16 @@ router.post('/reset-password', guestMiddleware, resetPassword);
  * @swagger
  * /api/auth/me:
  *   get:
- *     summary: Получение данных пользователя
- *     description: Получение данных текущего авторизованного пользователя.
+ *     tags: [Auth]
+ *     summary: Получение профиля
+ *     description: Получение данных текущего пользователя
  *     security:
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Успешное получение данных
+ *         description: Данные пользователя
  *       401:
- *         description: Ошибка авторизации
- *       404:
- *         description: Пользователь не найден
+ *         description: Не авторизован
  *       500:
  *         description: Внутренняя ошибка сервера
  */

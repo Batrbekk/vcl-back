@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
+import { getManagerWelcomeEmailTemplate } from './emailTemplates';
 
 dotenv.config();
 
@@ -61,4 +62,66 @@ export const sendResetPasswordEmail = async (email: string, code: string) => {
   };
 
   await transporter.sendMail(mailOptions);
+};
+
+interface ManagerEmailData {
+  managerName: string;
+  email: string;
+  password: string;
+  adminName: string;
+  companyName: string;
+}
+
+export const sendManagerWelcomeEmail = async (data: ManagerEmailData) => {
+  const mailOptions = {
+    from: process.env.EMAIL_FROM,
+    to: data.email,
+    subject: 'Добро пожаловать в VCL - Ваши учетные данные',
+    html: getManagerWelcomeEmailTemplate(
+      data.managerName,
+      data.email,
+      data.password,
+      data.adminName,
+      data.companyName
+    )
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+  } catch (error) {
+    console.error('Error sending manager welcome email:', error);
+    // Не выбрасываем ошибку, так как это не критичная операция
+  }
+};
+
+interface EmailOptions {
+  to: string;
+  subject: string;
+  html: string;
+}
+
+// Создаем транспорт для отправки писем
+const transporterForEmail = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: Number(process.env.SMTP_PORT),
+  secure: true,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASSWORD
+  }
+});
+
+// Функция для отправки email
+export const sendEmail = async (options: EmailOptions): Promise<void> => {
+  try {
+    await transporterForEmail.sendMail({
+      from: `"VCL" <${process.env.SMTP_USER}>`,
+      to: options.to,
+      subject: options.subject,
+      html: options.html
+    });
+  } catch (error) {
+    console.error('Error sending email:', error);
+    throw new Error('Failed to send email');
+  }
 }; 
