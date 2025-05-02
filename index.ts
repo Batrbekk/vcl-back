@@ -16,11 +16,24 @@ app.use(cors());
 app.use(express.json());
 
 // Swagger UI
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
-  customCss: '.swagger-ui .topbar { display: none }',
-  customSiteTitle: "VCL API Documentation",
-  customfavIcon: "/favicon.ico"
-}));
+const swaggerOptions = {
+  explorer: true,
+  swaggerOptions: {
+    urls: [
+      {
+        url: '/swagger.json',
+        name: 'VCL API'
+      }
+    ]
+  }
+};
+
+app.get('/swagger.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.send(swaggerSpec);
+});
+
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, swaggerOptions));
 
 // Подключение к MongoDB
 mongoose.connect(process.env.MONGODB_URI!)
@@ -29,6 +42,11 @@ mongoose.connect(process.env.MONGODB_URI!)
 
 // Маршруты
 app.use('/api/auth', authRoutes);
+
+// Корневой маршрут
+app.get('/', (req, res) => {
+  res.json({ message: 'Hello World' });
+});
 
 // Обработка ошибок
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

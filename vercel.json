@@ -4,16 +4,16 @@
         {
             "src": "index.ts",
             "use": "@vercel/node"
-        },
-        {
-            "src": "node_modules/swagger-ui-dist/**",
-            "use": "@vercel/static"
         }
     ],
     "routes": [
         {
+            "src": "/api-docs",
+            "dest": "index.ts"
+        },
+        {
             "src": "/api-docs/(.*)",
-            "dest": "node_modules/swagger-ui-dist/$1"
+            "dest": "index.ts"
         },
         {
             "src": "/(.*)",

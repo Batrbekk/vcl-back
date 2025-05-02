@@ -4,7 +4,7 @@
   "description": "VCL Backend API",
   "main": "index.ts",
   "scripts": {
-    "start": "ts-node index.ts",
+    "start": "node index",
     "dev": "nodemon index.ts",
     "build": "tsc",
     "vercel-build": "tsc"

@@ -10,9 +10,13 @@ const options: swaggerJsdoc.Options = {
     },
     servers: [
       {
-        url: process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000',
-        description: process.env.VERCEL_URL ? 'Production server' : 'Локальный сервер разработки',
+        url: 'https://vcl-back.vercel.app',
+        description: 'Production server',
       },
+      {
+        url: 'http://localhost:3000',
+        description: 'Локальный сервер разработки',
+      }
     ],
     components: {
       securitySchemes: {
