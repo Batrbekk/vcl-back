@@ -73,8 +73,7 @@ export const getManagerWelcomeEmailTemplate = (
     <body>
       <div class="container">
         <div class="header">
-          <h2 style="color: #333;">Добро пожаловать в VCL!</h2>
-          <h1 class="welcome">Добро пожаловать в команду!</h1>
+          <h1 class="welcome">Добро пожаловать в VCL!</h1>
         </div>
         
         <div class="content">

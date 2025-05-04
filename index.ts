@@ -3,9 +3,9 @@ import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import swaggerUi from 'swagger-ui-express';
-import path from 'path';
 import authRoutes from './src/routes/authRoutes';
 import managerRoutes from './src/routes/managerRoutes';
+import agentRoutes from './src/routes/agentRoutes';
 import { swaggerSpec } from './src/config/swagger';
 
 dotenv.config();
@@ -27,9 +27,9 @@ const swaggerOptions = {
   }
 };
 
-// Обслуживание статических файлов Swagger
+// Подключение Swagger UI
 app.use('/api-docs', swaggerUi.serve);
-app.get('/api-docs', swaggerUi.setup(swaggerSpec, swaggerOptions));
+app.use('/api-docs', swaggerUi.setup(swaggerSpec, swaggerOptions));
 
 // Подключение к MongoDB
 mongoose.connect(process.env.MONGODB_URI!)
@@ -39,6 +39,7 @@ mongoose.connect(process.env.MONGODB_URI!)
 // Маршруты
 app.use('/api/auth', authRoutes);
 app.use('/api/managers', managerRoutes);
+app.use('/api/agents', agentRoutes);
 
 // Корневой маршрут
 app.get('/', (req, res) => {
