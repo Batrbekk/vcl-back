@@ -8,6 +8,7 @@ import managerRoutes from './src/routes/managerRoutes';
 import agentRoutes from './src/routes/agentRoutes';
 import voiceRoutes from './src/routes/voiceRoutes';
 import supportRoutes from './src/routes/supportRoutes';
+import phoneRoutes from './src/routes/phoneRoutes';
 import { swaggerSpec } from './src/config/swagger';
 
 dotenv.config();
@@ -44,6 +45,7 @@ app.use('/api/managers', managerRoutes);
 app.use('/api/agents', agentRoutes);
 app.use('/api/voices', voiceRoutes);
 app.use('/api/support', supportRoutes);
+app.use('/api/phone', phoneRoutes);
 
 // Корневой маршрут
 app.get('/', (req, res) => {
