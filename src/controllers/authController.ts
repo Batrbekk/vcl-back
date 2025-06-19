@@ -196,4 +196,111 @@ export const getMe = async (req: CustomRequest, res: Response) => {
   } catch (error) {
     res.status(500).json({ message: 'Ошибка при получении данных пользователя' });
   }
+};
+
+export const updateProfile = async (req: CustomRequest, res: Response) => {
+  try {
+    if (!req.user?.userId) {
+      return res.status(401).json({ message: 'Не авторизован' });
+    }
+
+    const { firstName, lastName, companyName } = req.body;
+
+    // Валидация: проверяем что передан хотя бы один из допустимых полей
+    if (!firstName && !lastName && !companyName) {
+      return res.status(400).json({ 
+        message: 'Необходимо указать хотя бы одно поле для обновления',
+        allowed_fields: ['firstName', 'lastName', 'companyName']
+      });
+    }
+
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ message: 'Пользователь не найден' });
+    }
+
+    console.log('=== ОБНОВЛЕНИЕ ПРОФИЛЯ ПОЛЬЗОВАТЕЛЯ ===');
+    console.log('User ID:', req.user.userId);
+    console.log('Updates:', { firstName, lastName, companyName });
+
+    // Обновляем только переданные поля
+    if (firstName !== undefined) user.firstName = firstName;
+    if (lastName !== undefined) user.lastName = lastName; 
+    if (companyName !== undefined) user.companyName = companyName;
+
+    await user.save();
+
+    console.log('Профиль успешно обновлен');
+
+    // Возвращаем обновленные данные без пароля и служебных полей
+    const updatedUser = await User.findById(req.user.userId).select('-password -verificationCode -resetPasswordCode');
+
+    res.json({
+      message: 'Профиль успешно обновлен',
+      user: updatedUser
+    });
+  } catch (error) {
+    console.error('=== ОШИБКА ОБНОВЛЕНИЯ ПРОФИЛЯ ===');
+    console.error('Error updating profile:', error);
+    res.status(500).json({ message: 'Ошибка при обновлении профиля' });
+  }
+};
+
+export const changePassword = async (req: CustomRequest, res: Response) => {
+  try {
+    if (!req.user?.userId) {
+      return res.status(401).json({ message: 'Не авторизован' });
+    }
+
+    const { currentPassword, newPassword } = req.body;
+
+    // Валидация обязательных полей
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ 
+        message: 'Текущий пароль и новый пароль обязательны',
+        required_fields: ['currentPassword', 'newPassword']
+      });
+    }
+
+    // Валидация длины нового пароля
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'Новый пароль должен содержать минимум 6 символов' });
+    }
+
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ message: 'Пользователь не найден' });
+    }
+
+    console.log('=== СМЕНА ПАРОЛЯ ПОЛЬЗОВАТЕЛЯ ===');
+    console.log('User ID:', req.user.userId);
+    console.log('Email:', user.email);
+
+    // Проверяем текущий пароль
+    const isCurrentPasswordValid = await user.comparePassword(currentPassword);
+    if (!isCurrentPasswordValid) {
+      return res.status(400).json({ message: 'Неверный текущий пароль' });
+    }
+
+    // Проверяем что новый пароль отличается от текущего
+    const isSamePassword = await user.comparePassword(newPassword);
+    if (isSamePassword) {
+      return res.status(400).json({ message: 'Новый пароль должен отличаться от текущего' });
+    }
+
+    // Устанавливаем новый пароль (хеширование произойдет автоматически в pre('save') hook)
+    user.password = newPassword;
+    await user.save();
+
+    console.log('Пароль успешно изменен');
+
+    res.json({
+      message: 'Пароль успешно изменен',
+      changed_at: new Date()
+    });
+  } catch (error) {
+    console.error('=== ОШИБКА СМЕНЫ ПАРОЛЯ ===');
+    console.error('Error changing password:', error);
+    res.status(500).json({ message: 'Ошибка при смене пароля' });
+  }
 }; 
