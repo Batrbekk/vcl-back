@@ -34,10 +34,61 @@ const swaggerOptions = {
 app.use('/api-docs', swaggerUi.serve);
 app.use('/api-docs', swaggerUi.setup(swaggerSpec, swaggerOptions));
 
-// Подключение к MongoDB
-mongoose.connect(process.env.MONGODB_URI!)
-  .then(() => console.log('Connected to MongoDB'))
-  .catch((error) => console.error('MongoDB connection error:', error));
+// Подключение к MongoDB с расширенными настройками
+const connectToMongoDB = async () => {
+  try {
+    const mongoUri = process.env.MONGODB_URI;
+    
+    if (!mongoUri) {
+      throw new Error('MONGODB_URI environment variable is not defined');
+    }
+
+    console.log('Attempting to connect to MongoDB...');
+    console.log('MongoDB URI (masked):', mongoUri.replace(/\/\/.*@/, '//***:***@'));
+
+    await mongoose.connect(mongoUri, {
+      // Настройки для продакшена
+      maxPoolSize: 10, // Максимальное количество подключений в пуле
+      serverSelectionTimeoutMS: 10000, // Тайм-аут выбора сервера
+      socketTimeoutMS: 45000, // Тайм-аут сокета
+      retryWrites: true, // Повторные попытки записи
+    });
+
+    console.log('✅ Successfully connected to MongoDB Atlas');
+    
+    // Обработка событий подключения
+    mongoose.connection.on('error', (error) => {
+      console.error('❌ MongoDB connection error:', error);
+    });
+
+    mongoose.connection.on('disconnected', () => {
+      console.warn('⚠️ MongoDB disconnected');
+    });
+
+    mongoose.connection.on('reconnected', () => {
+      console.log('🔄 MongoDB reconnected');
+    });
+
+  } catch (error: any) {
+    console.error('❌ Failed to connect to MongoDB:', error.message);
+    
+    // Дополнительная информация для отладки
+    if (error.message.includes('IP')) {
+      console.error('💡 Suggestion: Check MongoDB Atlas IP whitelist');
+      console.error('💡 Add your server IP to Network Access in MongoDB Atlas');
+    }
+    
+    if (error.message.includes('authentication')) {
+      console.error('💡 Suggestion: Check MongoDB username/password in connection string');
+    }
+    
+    // Завершаем процесс при критической ошибке подключения
+    process.exit(1);
+  }
+};
+
+// Вызываем функцию подключения
+connectToMongoDB();
 
 // Маршруты
 app.use('/api/auth', authRoutes);
