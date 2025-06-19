@@ -6,6 +6,8 @@ import swaggerUi from 'swagger-ui-express';
 import authRoutes from './src/routes/authRoutes';
 import managerRoutes from './src/routes/managerRoutes';
 import agentRoutes from './src/routes/agentRoutes';
+import voiceRoutes from './src/routes/voiceRoutes';
+import supportRoutes from './src/routes/supportRoutes';
 import { swaggerSpec } from './src/config/swagger';
 
 dotenv.config();
@@ -40,6 +42,8 @@ mongoose.connect(process.env.MONGODB_URI!)
 app.use('/api/auth', authRoutes);
 app.use('/api/managers', managerRoutes);
 app.use('/api/agents', agentRoutes);
+app.use('/api/voices', voiceRoutes);
+app.use('/api/support', supportRoutes);
 
 // Корневой маршрут
 app.get('/', (req, res) => {

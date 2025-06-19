@@ -385,6 +385,328 @@ paths:
                     type: string
                     example: Ошибка при получении данных пользователя
 
+  /api/agents/llm-prices:
+    get:
+      summary: Получение доступных LLM моделей и цен
+      description: Возвращает список доступных LLM моделей для агентов с ценами за минуту использования
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: agent_id
+          schema:
+            type: string
+          description: ID конкретного агента (необязательно)
+      responses:
+        '200':
+          description: Список LLM моделей и цен получен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Информация о доступных LLM моделях получена
+                  llm_prices:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        llm:
+                          type: string
+                          example: gpt-4o-mini
+                        price_per_minute:
+                          type: number
+                          format: float
+                          example: 0.0006269457946554367
+                  retrieved_at:
+                    type: string
+                    format: date-time
+                    example: '2025-01-15T12:00:00Z'
+        '401':
+          description: Ошибка авторизации
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Требуется авторизация
+        '403':
+          description: Нет прав доступа
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Недостаточно прав доступа
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Ошибка при получении информации о LLM моделях
+                  details:
+                    type: string
+                    example: Не удалось получить информацию о ценах LLM моделей
+
+  /api/agents/knowledge-base:
+    get:
+      summary: Получение списка базы знаний
+      description: Возвращает список документов базы знаний из ElevenLabs
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: cursor
+          schema:
+            type: string
+          description: Курсор для пагинации
+        - in: query
+          name: page_size
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 30
+          description: Количество документов на странице
+      responses:
+        '200':
+          description: Список базы знаний получен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Список базы знаний получен
+                  documents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          example: POWdTREbVATbWkxwau6A
+                        name:
+                          type: string
+                          example: Mycar.kz - Покупка и продажа автомобилей в Казахстане
+                        metadata:
+                          type: object
+                          properties:
+                            created_at_unix_secs:
+                              type: number
+                              example: 1750195117
+                            last_updated_at_unix_secs:
+                              type: number
+                              example: 1750195117
+                            size_bytes:
+                              type: number
+                              example: 3051
+                        supported_usages:
+                          type: array
+                          items:
+                            type: string
+                          example: ['prompt', 'auto']
+                        access_info:
+                          type: object
+                          properties:
+                            is_creator:
+                              type: boolean
+                              example: true
+                            creator_name:
+                              type: string
+                              example: Batyrbek Kuandyk
+                            creator_email:
+                              type: string
+                              example: batrbekk@gmail.com
+                            role:
+                              type: string
+                              example: admin
+                        dependent_agents:
+                          type: array
+                          items:
+                            type: string
+                          example: []
+                        type:
+                          type: string
+                          example: url
+                        url:
+                          type: string
+                          example: https://mycar.kz
+                  next_cursor:
+                    type: string
+                    nullable: true
+                    example: null
+                  has_more:
+                    type: boolean
+                    example: false
+                  retrieved_at:
+                    type: string
+                    format: date-time
+                    example: '2025-01-15T12:00:00Z'
+        '401':
+          description: Ошибка авторизации
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Требуется авторизация
+        '403':
+          description: Нет прав доступа
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Недостаточно прав доступа
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Ошибка при получении списка базы знаний
+                  details:
+                    type: string
+                    example: Не удалось получить список базы знаний
+
+  /api/agents/{id}:
+    patch:
+      summary: Обновление агента
+      description: Обновляет данные агента в ElevenLabs и синхронизирует с MongoDB
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: ID агента в ElevenLabs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: Guzel
+                conversation_config:
+                  type: object
+                  description: Конфигурация разговора агента
+                platform_settings:
+                  type: object
+                  description: Настройки платформы
+                tags:
+                  type: array
+                  items:
+                    type: string
+                  example: ['sales', 'support']
+      responses:
+        '200':
+          description: Агент успешно обновлен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Агент успешно обновлен
+                  agent_id:
+                    type: string
+                    example: yufIbo0uUuoT5yZv5vds
+                  name:
+                    type: string
+                    example: Guzel
+                  conversation_config:
+                    type: object
+                    description: Обновленная конфигурация агента
+                  synced:
+                    type: boolean
+                    example: true
+                  synced_at:
+                    type: string
+                    format: date-time
+                    example: '2025-01-15T12:00:00Z'
+                  updated_at:
+                    type: string
+                    format: date-time
+                    example: '2025-01-15T12:00:00Z'
+        '400':
+          description: Неверные данные запроса
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Неверные данные запроса
+        '401':
+          description: Ошибка авторизации
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Требуется авторизация
+        '403':
+          description: Нет прав доступа
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Недостаточно прав доступа
+        '404':
+          description: Агент не найден
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Агент не найден
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Ошибка при обновлении агента
+                  details:
+                    type: string
+                    example: Не удалось обновить агента
+
 components:
   securitySchemes:
     bearerAuth:

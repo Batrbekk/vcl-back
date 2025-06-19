@@ -7,9 +7,9 @@ export interface IAgent extends Document {
   voice_settings: {
     stability: number;
     similarity_boost: number;
-    speaking_rate: number;
-    pitch: number;
-    emotion: string;
+    style: number;
+    use_speaker_boost: boolean;
+    speed: number;
   };
   language: string;
   gender: string;
@@ -58,22 +58,23 @@ const agentSchema = new Schema<IAgent>({
       min: 0,
       max: 1
     },
-    speaking_rate: {
+    style: {
       type: Number,
       required: true,
-      min: 0.5,
-      max: 2.0
+      min: 0,
+      max: 1
     },
-    pitch: {
+    use_speaker_boost: {
+      type: Boolean,
+      required: true,
+      default: true
+    },
+    speed: {
       type: Number,
       required: true,
-      min: -20,
-      max: 20
-    },
-    emotion: {
-      type: String,
-      required: true,
-      enum: ['cheerful', 'neutral', 'sad', 'angry']
+      min: 0.1,
+      max: 5.0,
+      default: 1
     }
   },
   language: {
@@ -134,7 +135,7 @@ const agentSchema = new Schema<IAgent>({
   },
   phone_number: {
     type: String,
-    required: true,
+    required: false,
     trim: true,
     match: /^\+[1-9]\d{10,14}$/
   },

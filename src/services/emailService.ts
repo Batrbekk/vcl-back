@@ -72,6 +72,14 @@ interface ManagerEmailData {
   companyName: string;
 }
 
+interface SupportTicketData {
+  clientName: string;
+  clientEmail: string;
+  problemType: string;
+  subject: string;
+  description: string;
+}
+
 export const sendManagerWelcomeEmail = async (data: ManagerEmailData) => {
   const mailOptions = {
     from: process.env.EMAIL_FROM,
@@ -123,5 +131,79 @@ export const sendEmail = async (options: EmailOptions): Promise<void> => {
   } catch (error) {
     console.error('Error sending email:', error);
     throw new Error('Failed to send email');
+  }
+};
+
+/**
+ * Отправка обращения в службу поддержки
+ */
+export const sendSupportEmail = async (data: SupportTicketData) => {
+  const supportEmail = process.env.EMAIL_USER; // Отправляем самому себе
+  
+  const mailOptions = {
+    from: process.env.EMAIL_FROM,
+    to: supportEmail,
+    subject: `[VCL Support] ${data.problemType}: ${data.subject}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+          <h2 style="color: #9077FF; margin: 0 0 20px 0;">🎧 Новое обращение в службу поддержки VCL</h2>
+        </div>
+        
+        <div style="background-color: #ffffff; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 20px;">
+          <h3 style="color: #333; margin-bottom: 15px;">📋 Информация о клиенте</h3>
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 8px 0; font-weight: bold; color: #555; width: 120px;">Имя:</td>
+              <td style="padding: 8px 0; color: #333;">${data.clientName}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 0; font-weight: bold; color: #555;">Email:</td>
+              <td style="padding: 8px 0; color: #333;">${data.clientEmail}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 0; font-weight: bold; color: #555;">Тип проблемы:</td>
+              <td style="padding: 8px 0; color: #333;">${data.problemType}</td>
+            </tr>
+          </table>
+        </div>
+        
+        <div style="background-color: #ffffff; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 20px;">
+          <h3 style="color: #333; margin-bottom: 15px;">📝 Детали обращения</h3>
+          <div style="margin-bottom: 15px;">
+            <strong style="color: #555;">Тема:</strong>
+            <div style="padding: 10px; background-color: #f8f9fa; border-radius: 4px; margin-top: 5px;">
+              ${data.subject}
+            </div>
+          </div>
+          <div>
+            <strong style="color: #555;">Описание:</strong>
+            <div style="padding: 15px; background-color: #f8f9fa; border-radius: 4px; margin-top: 5px; line-height: 1.6;">
+              ${data.description.replace(/\n/g, '<br>')}
+            </div>
+          </div>
+        </div>
+        
+        <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+          <p style="margin: 0; color: #856404;">
+            <strong>📧 Для ответа клиенту:</strong> ${data.clientEmail}
+          </p>
+        </div>
+        
+        <div style="text-align: center; color: #6b7280; font-size: 14px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+          <p>Это автоматическое уведомление от системы VCL</p>
+          <p>Дата получения: ${new Date().toLocaleString('ru-RU')}</p>
+          <p>&copy; ${new Date().getFullYear()} VCL. Все права защищены.</p>
+        </div>
+      </div>
+    `,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log('Support email sent successfully to:', supportEmail);
+  } catch (error) {
+    console.error('Error sending support email:', error);
+    throw new Error('Не удалось отправить обращение в службу поддержки');
   }
 }; 
