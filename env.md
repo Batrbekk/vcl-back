@@ -17,7 +17,7 @@ EMAIL_PASS="tsdi jdqh xccm tibo"
 EMAIL_FROM="batrbekk@gmail.com"
 
 # ElevenLabs
-ELEVENLABS_API_KEY="sk_b4497622adce173cb9b35b5b04f13228fb1d2fc6b63fe35e"
+ELEVENLABS_API_KEY="sk_f3c2509451bd3aa34cf9fcf8bdebb8d0a95734863c59f407"
 
 # Server
 PORT=3000
