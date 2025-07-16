@@ -1,28 +1,29 @@
 -- CreateTable
 CREATE TABLE "Company" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "timezone" TEXT NOT NULL DEFAULT 'UTC',
     "currency" TEXT NOT NULL DEFAULT 'USD',
     "language" TEXT NOT NULL DEFAULT 'ru',
     "subscriptionPlan" TEXT NOT NULL DEFAULT 'basic',
     "subscriptionStatus" TEXT NOT NULL DEFAULT 'active',
-    "subscriptionExpiresAt" DATETIME,
+    "subscriptionExpiresAt" TIMESTAMP(3),
     "maxAgents" INTEGER NOT NULL DEFAULT 10,
     "maxPhoneNumbers" INTEGER NOT NULL DEFAULT 5,
     "maxManagers" INTEGER NOT NULL DEFAULT 3,
     "maxMonthlyCalls" INTEGER NOT NULL DEFAULT 1000,
-    "createdBy" TEXT NOT NULL,
-    CONSTRAINT "Company_createdBy_fkey" FOREIGN KEY ("createdBy") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    "createdBy" TEXT,
+
+    CONSTRAINT "Company_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "User" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "email" TEXT NOT NULL,
     "firstName" TEXT NOT NULL,
     "lastName" TEXT NOT NULL,
@@ -30,17 +31,19 @@ CREATE TABLE "User" (
     "companyId" TEXT NOT NULL,
     "password" TEXT NOT NULL,
     "isVerified" BOOLEAN NOT NULL DEFAULT false,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
     "verificationCode" TEXT,
     "resetPasswordCode" TEXT,
     "role" TEXT NOT NULL DEFAULT 'admin',
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
-    CONSTRAINT "User_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "User_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "Manager" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "email" TEXT NOT NULL,
     "firstName" TEXT NOT NULL,
     "lastName" TEXT NOT NULL,
@@ -49,15 +52,15 @@ CREATE TABLE "Manager" (
     "role" TEXT NOT NULL DEFAULT 'manager',
     "adminId" TEXT NOT NULL,
     "companyId" TEXT NOT NULL,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
-    CONSTRAINT "Manager_adminId_fkey" FOREIGN KEY ("adminId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "Manager_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Manager_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "Agent" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT NOT NULL,
     "voiceId" TEXT NOT NULL,
@@ -72,25 +75,25 @@ CREATE TABLE "Agent" (
     "aiModel" TEXT NOT NULL,
     "aiContextPrompt" TEXT NOT NULL,
     "elevenLabsAgentId" TEXT,
-    "voiceStability" REAL NOT NULL DEFAULT 0.5,
-    "voiceSimilarityBoost" REAL NOT NULL DEFAULT 0.5,
-    "voiceStyle" REAL NOT NULL DEFAULT 0.5,
+    "voiceStability" DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+    "voiceSimilarityBoost" DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+    "voiceStyle" DOUBLE PRECISION NOT NULL DEFAULT 0.5,
     "voiceUseSpeakerBoost" BOOLEAN NOT NULL DEFAULT true,
-    "voiceSpeed" REAL NOT NULL DEFAULT 1.0,
+    "voiceSpeed" DOUBLE PRECISION NOT NULL DEFAULT 1.0,
     "allowedHoursStart" TEXT NOT NULL,
     "allowedHoursEnd" TEXT NOT NULL,
     "allowedHoursTimezone" TEXT NOT NULL,
     "adminId" TEXT NOT NULL,
     "companyId" TEXT NOT NULL,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
-    CONSTRAINT "Agent_adminId_fkey" FOREIGN KEY ("adminId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "Agent_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Agent_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "ElevenLabsAgent" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "agentId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "tags" TEXT NOT NULL,
@@ -103,25 +106,41 @@ CREATE TABLE "ElevenLabsAgent" (
     "metadata" TEXT,
     "platformSettings" TEXT,
     "phoneNumbers" TEXT,
-    "syncedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "syncedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "adminId" TEXT NOT NULL,
     "companyId" TEXT NOT NULL,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
-    CONSTRAINT "ElevenLabsAgent_adminId_fkey" FOREIGN KEY ("adminId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "ElevenLabsAgent_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "ElevenLabsAgent_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "PhoneNumber" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "phoneNumber" TEXT NOT NULL,
     "label" TEXT NOT NULL,
     "provider" TEXT NOT NULL,
     "companyId" TEXT NOT NULL,
     "providerData" TEXT,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "PhoneNumber_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "CompanyKnowledgeBase" (
+    "id" TEXT NOT NULL,
+    "companyId" TEXT NOT NULL,
+    "elevenLabsDocumentId" TEXT NOT NULL,
+    "documentName" TEXT NOT NULL,
+    "documentType" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "createdBy" TEXT,
+
+    CONSTRAINT "CompanyKnowledgeBase_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
@@ -189,3 +208,48 @@ CREATE INDEX "PhoneNumber_companyId_idx" ON "PhoneNumber"("companyId");
 
 -- CreateIndex
 CREATE INDEX "PhoneNumber_phoneNumber_idx" ON "PhoneNumber"("phoneNumber");
+
+-- CreateIndex
+CREATE INDEX "CompanyKnowledgeBase_companyId_idx" ON "CompanyKnowledgeBase"("companyId");
+
+-- CreateIndex
+CREATE INDEX "CompanyKnowledgeBase_elevenLabsDocumentId_idx" ON "CompanyKnowledgeBase"("elevenLabsDocumentId");
+
+-- CreateIndex
+CREATE INDEX "CompanyKnowledgeBase_createdBy_idx" ON "CompanyKnowledgeBase"("createdBy");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "CompanyKnowledgeBase_companyId_elevenLabsDocumentId_key" ON "CompanyKnowledgeBase"("companyId", "elevenLabsDocumentId");
+
+-- AddForeignKey
+ALTER TABLE "Company" ADD CONSTRAINT "Company_createdBy_fkey" FOREIGN KEY ("createdBy") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "User" ADD CONSTRAINT "User_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Manager" ADD CONSTRAINT "Manager_adminId_fkey" FOREIGN KEY ("adminId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Manager" ADD CONSTRAINT "Manager_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Agent" ADD CONSTRAINT "Agent_adminId_fkey" FOREIGN KEY ("adminId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Agent" ADD CONSTRAINT "Agent_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ElevenLabsAgent" ADD CONSTRAINT "ElevenLabsAgent_adminId_fkey" FOREIGN KEY ("adminId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ElevenLabsAgent" ADD CONSTRAINT "ElevenLabsAgent_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PhoneNumber" ADD CONSTRAINT "PhoneNumber_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "CompanyKnowledgeBase" ADD CONSTRAINT "CompanyKnowledgeBase_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "CompanyKnowledgeBase" ADD CONSTRAINT "CompanyKnowledgeBase_createdBy_fkey" FOREIGN KEY ("createdBy") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
