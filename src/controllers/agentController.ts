@@ -1,863 +1,1380 @@
-import { Request, Response } from 'express';
-import { ElevenLabsAgent } from '../models/ElevenLabsAgent';
-import { User } from '../models/User';
+import { Response, NextFunction } from 'express';
+import { prisma } from '../services/database';
 import { elevenLabsService } from '../services/elevenLabsService';
-import multer from 'multer';
+import { CustomRequest, AuthenticatedRequest } from '../types';
 
-// Получение и синхронизация списка агентов из ElevenLabs
-export const getAgents = async (req: Request, res: Response) => {
-  try {
-    const adminId = req.user!.userId;
-    const { cursor, page_size, search, sync } = req.query;
-
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
-    }
-
-    // Если запрос включает синхронизацию или база данных пуста
-    if (sync === 'true' || await ElevenLabsAgent.countDocuments({ adminId }) === 0) {
-      try {
-        // Получаем агентов из ElevenLabs
-        const elevenLabsResponse = await elevenLabsService.getAgents(
-          cursor as string,
-          page_size ? parseInt(page_size as string) : 30,
-          search as string
-        );
-
-        // Синхронизируем с базой данных
-        for (const agent of elevenLabsResponse.agents) {
-          await ElevenLabsAgent.findOneAndUpdate(
-            { agent_id: agent.agent_id },
-            {
-              ...agent,
-              adminId,
-              synced_at: new Date()
-            },
-            { upsert: true, new: true }
-          );
-        }
-
-        // Возвращаем ответ с данными ElevenLabs
-        return res.json({
-          agents: elevenLabsResponse.agents,
-          next_cursor: elevenLabsResponse.next_cursor,
-          has_more: elevenLabsResponse.has_more,
-          synced: true,
-          synced_at: new Date()
-        });
-      } catch (elevenLabsError) {
-        console.error('ElevenLabs sync error:', elevenLabsError);
-        // Fallback: возвращаем данные из MongoDB если синхронизация не удалась
-      }
-    }
-
-    // Получаем данные из MongoDB
-    const filter: any = { adminId };
-    if (search) {
-      filter.name = { $regex: search, $options: 'i' };
-    }
-
-    const agents = await ElevenLabsAgent.find(filter)
-      .sort({ created_at_unix_secs: -1 })
-      .limit(page_size ? parseInt(page_size as string) : 30);
-
-    res.json({
-      agents: agents.map(agent => ({
-        agent_id: agent.agent_id,
-        name: agent.name,
-        tags: agent.tags,
-        created_at_unix_secs: agent.created_at_unix_secs,
-        access_info: agent.access_info
-      })),
-      next_cursor: null,
-      has_more: false,
-      synced: false,
-      synced_at: agents[0]?.synced_at
-    });
-  } catch (error: any) {
-    console.error('Error getting agents:', error);
-    res.status(500).json({ message: 'Ошибка при получении списка агентов' });
-  }
-};
-
-// Получение детальной информации об агенте по ID
-export const getAgentById = async (req: Request, res: Response) => {
-  try {
-    const adminId = req.user!.userId;
-    const agentId = req.params.id;
-    const { sync } = req.query;
-
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
-    }
-
-    // Если запрошена синхронизация или агент не найден в базе
-    const localAgent = await ElevenLabsAgent.findOne({ agent_id: agentId, adminId });
+// Функция для валидации и преобразования данных обновления агента
+const validateAndTransformUpdateData = (updateData: any): any => {
+  const transformedData = JSON.parse(JSON.stringify(updateData)); // Deep copy
+  
+  if (transformedData.conversation_config) {
+    const config = transformedData.conversation_config;
     
-    if (sync === 'true' || !localAgent) {
+    // Исправляем ASR настройки
+    if (config.asr) {
+      // Заменяем "default" на правильное значение
+      if (config.asr.provider === 'default') {
+        config.asr.provider = 'elevenlabs';
+      }
+      // Заменяем "wav" на правильный PCM формат
+      if (config.asr.user_input_audio_format === 'wav') {
+        config.asr.user_input_audio_format = 'pcm_16000';
+      }
+    }
+    
+    // Исправляем Turn настройки
+    if (config.turn) {
+      // Заменяем "auto" на правильное значение
+      if (config.turn.mode === 'auto') {
+        config.turn.mode = 'turn';
+      }
+    }
+    
+    // Исправляем TTS настройки
+    if (config.tts) {
+      // Заменяем "default" на правильную TTS модель
+      if (config.tts.model_id === 'default') {
+        config.tts.model_id = 'eleven_turbo_v2_5';
+      }
+      // Заменяем "wav" на правильный PCM формат
+      if (config.tts.agent_output_audio_format === 'wav') {
+        config.tts.agent_output_audio_format = 'pcm_16000';
+      }
+    }
+    
+    // Исправляем Conversation настройки
+    if (config.conversation) {
+      // Добавляем обязательные client_events если массив пустой
+      if (!config.conversation.client_events || config.conversation.client_events.length === 0) {
+        config.conversation.client_events = ['hang_up', 'phone_call_connected'];
+      }
+    }
+    
+    // Исправляем Agent настройки
+    if (config.agent?.prompt?.rag) {
+      // Заменяем "default" на правильную embedding модель
+      if (config.agent.prompt.rag.embedding_model === 'default') {
+        config.agent.prompt.rag.embedding_model = 'e5_mistral_7b_instruct';
+      }
+    }
+  }
+  
+  return transformedData;
+};
+
+// Получить всех агентов компании
+export const getAgents = async (req: CustomRequest, res: Response, next: NextFunction) => {
+  try {
+    const { companyId } = req.user!;
+    
+    console.log(`[Company ${companyId}] Fetching agents`);
+    
+    const agents = await prisma.agent.findMany({
+      where: { companyId },
+      orderBy: { createdAt: 'desc' }
+    });
+    
+    console.log(`[Company ${companyId}] Found ${agents.length} agents`);
+
+    res.json({
+      success: true,
+      data: agents,
+      count: agents.length
+    });
+  } catch (error) {
+    console.error(`[Company ${req.user?.companyId}] Error fetching agents:`, error);
+    next(error);
+  }
+};
+
+// Создать нового агента
+export const createAgent = async (req: CustomRequest, res: Response, next: NextFunction) => {
+  try {
+    const { companyId } = req.user!;
+    const { name } = req.body;
+    
+    console.log(`[Company ${companyId}] Creating agent: ${name}`);
+    
+    // Создаем агента в ElevenLabs
+    const elevenLabsAgent = await elevenLabsService.createAgent({
+      name
+    });
+    
+    // Сохраняем агента в базе данных
+    const agent = await prisma.agent.create({
+      data: {
+        name,
+        description: 'Default agent description',
+        voiceId: 'default',
+        voiceStability: 0.5,
+        voiceSimilarityBoost: 0.5,
+        voiceStyle: 0.5,
+        voiceUseSpeakerBoost: true,
+        voiceSpeed: 1.0,
+        language: 'ru',
+        gender: 'male',
+        greetingTemplate: 'Hello! How can I help you today?',
+        fallbackTemplate: 'I\'m sorry, I didn\'t understand that. Could you please repeat?',
+        summaryTemplate: 'Thank you for your time. Have a great day!',
+        allowedHoursStart: '09:00',
+        allowedHoursEnd: '17:00',
+        allowedHoursTimezone: 'UTC',
+        integratedWithAi: true,
+        aiModel: 'gpt-3.5-turbo',
+        aiContextPrompt: 'You are a helpful assistant.',
+        phoneNumber: '',
+        isActive: true,
+        adminId: req.user!.id,
+        companyId,
+        elevenLabsAgentId: elevenLabsAgent.agent_id
+      }
+    });
+    
+    console.log(`[Company ${companyId}] Agent created successfully: ${agent.id}`);
+    
+    res.status(201).json({
+      success: true,
+      data: agent,
+      message: 'Agent created successfully'
+    });
+  } catch (error) {
+    console.error(`[Company ${req.user?.companyId}] Error creating agent:`, error);
+    next(error);
+  }
+};
+
+// Получить агента по ID
+export const getAgentById = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { companyId } = req.user!;
+    const { id } = req.params;
+    const { sync } = req.query;
+    
+    console.log(`[Company ${companyId}] Fetching agent: ${id}${sync ? ' (with sync)' : ''}`);
+    
+    const agent = await prisma.agent.findUnique({
+      where: { 
+        id,
+        companyId 
+      }
+    });
+    
+    if (!agent) {
+      console.log(`[Company ${companyId}] Agent not found: ${id}`);
+      return res.status(404).json({
+        success: false,
+        message: 'Agent not found'
+      });
+    }
+    
+    console.log(`[Company ${companyId}] Agent found: ${agent.id}`);
+
+    // Если указан параметр sync=true, синхронизируем данные с ElevenLabs
+    if (sync === 'true' && agent.elevenLabsAgentId) {
       try {
-        // Получаем детальную информацию из ElevenLabs
-        const elevenLabsAgent = await elevenLabsService.getAgentById(agentId);
-
-        // Сохраняем/обновляем в MongoDB
-        const savedAgent = await ElevenLabsAgent.findOneAndUpdate(
-          { agent_id: agentId },
-          {
-            ...elevenLabsAgent,
-            tags: elevenLabsAgent.tags || [],
-            adminId,
-            synced_at: new Date()
-          },
-          { upsert: true, new: true }
-        );
-
-        return res.json({
-          ...elevenLabsAgent,
-          synced: true,
-          synced_at: savedAgent.synced_at
-        });
-      } catch (elevenLabsError) {
-        console.error('ElevenLabs sync error:', elevenLabsError);
-        // Fallback: если синхронизация не удалась, попробуем вернуть из MongoDB
-      }
-    }
-
-    // Возвращаем из MongoDB
-    if (localAgent) {
-      return res.json({
-        agent_id: localAgent.agent_id,
-        name: localAgent.name,
-        conversation_config: localAgent.conversation_config,
-        metadata: localAgent.metadata,
-        platform_settings: localAgent.platform_settings,
-        phone_numbers: localAgent.phone_numbers,
-        access_info: localAgent.access_info,
-        tags: localAgent.tags,
-        synced: false,
-        synced_at: localAgent.synced_at
-      });
-    }
-
-    res.status(404).json({ message: 'Агент не найден' });
-  } catch (error: any) {
-    console.error('Error getting agent by ID:', error);
-    res.status(500).json({ message: 'Ошибка при получении агента' });
-  }
-};
-
-// Принудительная синхронизация всех агентов
-export const syncAgents = async (req: Request, res: Response) => {
-  try {
-    const adminId = req.user!.userId;
-
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
-    }
-
-    let allAgents: any[] = [];
-    let cursor: string | null = null;
-    let hasMore = true;
-
-    // Получаем всех агентов с пагинацией
-    while (hasMore) {
-      const response = await elevenLabsService.getAgents(cursor || undefined, 100);
-      allAgents = allAgents.concat(response.agents);
-      cursor = response.next_cursor;
-      hasMore = response.has_more;
-    }
-
-    // Синхронизируем с базой данных
-    let syncedCount = 0;
-    for (const agent of allAgents) {
-      await ElevenLabsAgent.findOneAndUpdate(
-        { agent_id: agent.agent_id },
-        {
-          ...agent,
-          adminId,
-          synced_at: new Date()
-        },
-        { upsert: true, new: true }
-      );
-      syncedCount++;
-    }
-
-    res.json({
-      message: 'Синхронизация завершена',
-      synced_count: syncedCount,
-      total_agents: allAgents.length,
-      synced_at: new Date()
-    });
-  } catch (error: any) {
-    console.error('Error syncing agents:', error);
-    res.status(500).json({ message: 'Ошибка при синхронизации агентов' });
-  }
-};
-
-// Получение статистики синхронизации
-export const getSyncStats = async (req: Request, res: Response) => {
-  try {
-    const adminId = req.user!.userId;
-
-    const totalAgents = await ElevenLabsAgent.countDocuments({ adminId });
-    const lastSyncAgent = await ElevenLabsAgent.findOne({ adminId })
-      .sort({ synced_at: -1 })
-      .select('synced_at');
-
-    res.json({
-      total_agents: totalAgents,
-      last_sync: lastSyncAgent?.synced_at || null,
-      needs_sync: !lastSyncAgent || Date.now() - lastSyncAgent.synced_at.getTime() > 24 * 60 * 60 * 1000 // 24 часа
-    });
-  } catch (error: any) {
-    console.error('Error getting sync stats:', error);
-    res.status(500).json({ message: 'Ошибка при получении статистики синхронизации' });
-  }
-};
-
-// Удаление агента
-export const deleteAgent = async (req: Request, res: Response) => {
-  try {
-    const adminId = req.user!.userId;
-    const agentId = req.params.id;
-
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
-    }
-
-    // Проверяем, существует ли агент в нашей базе
-    const localAgent = await ElevenLabsAgent.findOne({ agent_id: agentId, adminId });
-    if (!localAgent) {
-      return res.status(404).json({ message: 'Агент не найден в локальной базе данных' });
-    }
-
-    try {
-      // Удаляем агента из ElevenLabs
-      await elevenLabsService.deleteAgent(agentId);
-      
-      // Удаляем агента из MongoDB
-      await ElevenLabsAgent.findOneAndDelete({ agent_id: agentId, adminId });
-
-      res.json({
-        message: 'Агент успешно удален',
-        agent_id: agentId,
-        deleted_at: new Date()
-      });
-    } catch (elevenLabsError: any) {
-      // Если не удалось удалить из ElevenLabs, проверяем причину
-      if (elevenLabsError.message.includes('404') || elevenLabsError.message.includes('не найден')) {
-        // Агент уже не существует в ElevenLabs, удаляем только из MongoDB
-        await ElevenLabsAgent.findOneAndDelete({ agent_id: agentId, adminId });
+        console.log(`[Company ${companyId}] Syncing agent data from ElevenLabs: ${agent.elevenLabsAgentId}`);
         
-        return res.json({
-          message: 'Агент удален из локальной базы (не найден в ElevenLabs)',
-          agent_id: agentId,
-          deleted_at: new Date(),
-          warning: 'Агент уже был удален из ElevenLabs'
+        // Получаем актуальные данные агента из ElevenLabs
+        const elevenLabsAgent = await elevenLabsService.getAgentById(agent.elevenLabsAgentId);
+        
+        // Обновляем локальную базу данных с актуальными данными
+        const updatedAgent = await prisma.agent.update({
+          where: { id: agent.id },
+          data: {
+            name: elevenLabsAgent.name,
+            language: elevenLabsAgent.conversation_config.agent.language || 'ru',
+            voiceId: elevenLabsAgent.conversation_config.tts.voice_id || 'default',
+            voiceStability: elevenLabsAgent.conversation_config.tts.stability || 0.5,
+            voiceSimilarityBoost: elevenLabsAgent.conversation_config.tts.similarity_boost || 0.5,
+            voiceSpeed: elevenLabsAgent.conversation_config.tts.speed || 1.0,
+            greetingTemplate: elevenLabsAgent.conversation_config.agent.first_message || 'Hello! How can I help you today?',
+            aiModel: elevenLabsAgent.conversation_config.agent.prompt.llm || 'gpt-3.5-turbo',
+            aiContextPrompt: elevenLabsAgent.conversation_config.agent.prompt.prompt || 'You are a helpful assistant.',
+            allowedHoursStart: '09:00',
+            allowedHoursEnd: '17:00',
+            allowedHoursTimezone: 'UTC',
+            updatedAt: new Date()
+          }
+        });
+        
+        console.log(`[Company ${companyId}] Agent data synchronized successfully: ${updatedAgent.id}`);
+        
+        res.json({
+          success: true,
+          data: updatedAgent,
+          synced: true
+        });
+      } catch (syncError) {
+        console.error(`[Company ${companyId}] Error syncing agent data:`, syncError);
+        
+        // Если синхронизация не удалась, возвращаем локальные данные
+        res.json({
+          success: true,
+          data: agent,
+          synced: false,
+          syncError: 'Failed to sync with ElevenLabs'
+        });
+      }
+    } else {
+      // Возвращаем локальные данные без синхронизации
+      res.json({
+        success: true,
+        data: agent
+      });
+    }
+  } catch (error) {
+    console.error(`[Company ${req.user?.companyId}] Error fetching agent:`, error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Синхронизировать агентов с ElevenLabs
+export const syncAgents = async (req: CustomRequest, res: Response, next: NextFunction) => {
+  try {
+    const { companyId } = req.user!;
+    
+    console.log(`[Company ${companyId}] Starting agents sync`);
+    
+    // Получаем всех агентов из ElevenLabs
+    const elevenLabsResponse = await elevenLabsService.getAgents();
+    
+    let syncedCount = 0;
+    let createdCount = 0;
+    
+    for (const elevenLabsAgent of elevenLabsResponse.agents) {
+      // Проверяем, есть ли уже такой агент в базе
+      const existingAgent = await prisma.agent.findFirst({
+        where: {
+          elevenLabsAgentId: elevenLabsAgent.agent_id,
+          companyId
+        }
+      });
+      
+      if (!existingAgent) {
+        // Создаем новый агент
+        const newAgent = await prisma.agent.create({
+          data: {
+            name: elevenLabsAgent.name,
+            description: 'Synced agent description',
+            voiceId: 'default',
+            voiceStability: 0.5,
+            voiceSimilarityBoost: 0.5,
+            voiceStyle: 0.5,
+            voiceUseSpeakerBoost: true,
+            voiceSpeed: 1.0,
+            language: 'ru',
+            gender: 'male',
+            greetingTemplate: 'Hello! How can I help you today?',
+            fallbackTemplate: 'I\'m sorry, I didn\'t understand that. Could you please repeat?',
+            summaryTemplate: 'Thank you for your time. Have a great day!',
+            allowedHoursStart: '09:00',
+            allowedHoursEnd: '17:00',
+            allowedHoursTimezone: 'UTC',
+            integratedWithAi: true,
+            aiModel: 'gpt-3.5-turbo',
+            aiContextPrompt: 'You are a helpful assistant.',
+            phoneNumber: '',
+            isActive: true,
+            adminId: req.user!.id,
+            companyId,
+            elevenLabsAgentId: elevenLabsAgent.agent_id
+          }
+        });
+        
+        createdCount++;
+        console.log(`[Company ${companyId}] Created new agent: ${newAgent.id}`);
+      } else {
+        // Обновляем существующий агент
+        const updatedAgent = await prisma.agent.update({
+          where: { id: existingAgent.id },
+          data: { name: elevenLabsAgent.name }
+        });
+        
+        syncedCount++;
+        console.log(`[Company ${companyId}] Updated existing agent: ${updatedAgent.id}`);
+      }
+    }
+    
+    console.log(`[Company ${companyId}] Sync completed: ${createdCount} created, ${syncedCount} updated`);
+    
+    res.json({
+      success: true,
+      message: 'Agents synchronized successfully',
+      stats: {
+        created: createdCount,
+        updated: syncedCount,
+        total: elevenLabsResponse.agents.length
+      }
+    });
+  } catch (error) {
+    console.error(`[Company ${req.user?.companyId}] Error syncing agents:`, error);
+    next(error);
+  }
+};
+
+// Удалить агента
+export const deleteAgent = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { companyId } = req.user!;
+    const { id } = req.params;
+
+    console.log(`[Company ${companyId}] Deleting agent: ${id}`);
+    
+    const agent = await prisma.agent.findUnique({
+      where: { 
+        id,
+        companyId 
+      }
+    });
+    
+    if (!agent) {
+      console.log(`[Company ${companyId}] Agent not found for deletion: ${id}`);
+      return res.status(404).json({ 
+        success: false,
+        message: 'Agent not found'
+      });
+    }
+    
+    // Удаляем агента из ElevenLabs
+    if (agent.elevenLabsAgentId) {
+      try {
+        await elevenLabsService.deleteAgent(agent.elevenLabsAgentId);
+        console.log(`[Company ${companyId}] Agent deleted from ElevenLabs: ${agent.elevenLabsAgentId}`);
+      } catch (error) {
+        console.error(`[Company ${companyId}] Error deleting agent from ElevenLabs:`, error);
+      }
+    }
+    
+    // Удаляем агента из базы данных
+    await prisma.agent.delete({
+      where: { id }
+    });
+    
+    console.log(`[Company ${companyId}] Agent deleted successfully: ${id}`);
+    
+    res.json({
+      success: true,
+      message: 'Agent deleted successfully'
+    });
+  } catch (error) {
+    console.error(`[Company ${req.user?.companyId}] Error deleting agent:`, error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Получить цены LLM моделей
+export const getLLMPrices = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { agent_id } = req.query;
+    
+    console.log(`[Company ${req.user?.companyId}] Fetching LLM prices for agent: ${agent_id}`);
+    
+    let elevenLabsAgentId: string | undefined;
+    
+    // Проверяем, что агент принадлежит компании пользователя (если указан)
+    if (agent_id) {
+      const agent = await prisma.agent.findUnique({
+        where: { 
+          id: agent_id as string,
+          companyId: req.user!.companyId 
+        }
+      });
+      
+      if (!agent) {
+        console.log(`[Company ${req.user?.companyId}] Agent not found for LLM prices: ${agent_id}`);
+        return res.status(404).json({
+          success: false,
+          message: 'Agent not found'
         });
       }
       
-      // Если другая ошибка, не удаляем из MongoDB и возвращаем ошибку
-      throw elevenLabsError;
+      elevenLabsAgentId = agent.elevenLabsAgentId || undefined;
+      console.log(`[Company ${req.user?.companyId}] Using ElevenLabs Agent ID: ${elevenLabsAgentId}`);
     }
-  } catch (error: any) {
-    console.error('Error deleting agent:', error);
-    res.status(500).json({ 
-      message: 'Ошибка при удалении агента',
-      details: error.message 
-    });
-  }
-};
-
-// Получение доступных LLM моделей и их цен
-export const getLLMPrices = async (req: Request, res: Response) => {
-  try {
-    const adminId = req.user!.userId;
-    const { agent_id } = req.query;
-
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
-    }
-
-    // Получаем информацию о ценах LLM моделей из ElevenLabs
-    const llmPricesData = await elevenLabsService.getLLMPrices(agent_id as string);
+    
+    // Получаем цены LLM из ElevenLabs
+    const llmPrices = await elevenLabsService.getLLMPrices(elevenLabsAgentId);
+    
+    console.log(`[Company ${req.user?.companyId}] LLM prices fetched successfully`);
 
     res.json({
-      message: 'Информация о доступных LLM моделях получена',
-      ...llmPricesData,
-      retrieved_at: new Date()
+      success: true,
+      data: llmPrices
     });
-  } catch (error: any) {
-    console.error('Error getting LLM prices:', error);
+  } catch (error) {
+    console.error(`[Company ${req.user?.companyId}] Error fetching LLM prices:`, error);
     res.status(500).json({ 
-      message: 'Ошибка при получении информации о LLM моделях',
-      details: error.message 
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
 
-// Получение списка базы знаний
-export const getKnowledgeBase = async (req: Request, res: Response) => {
+// Получить базу знаний
+export const getKnowledgeBase = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const adminId = req.user!.userId;
-    const { cursor, page_size } = req.query;
+    const { companyId } = req.user!;
+    const { page_size, cursor } = req.query;
+    
+    console.log(`[Company ${companyId}] Fetching knowledge base with page_size: ${page_size}, cursor: ${cursor}`);
+    
+    // Получаем список документов компании из локальной базы данных
+    const companyDocuments = await prisma.companyKnowledgeBase.findMany({
+      where: { companyId },
+      orderBy: { createdAt: 'desc' }
+    });
 
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
+    console.log(`[Company ${companyId}] Found ${companyDocuments.length} company documents in local DB`);
+
+    // Если у компании нет документов, возвращаем пустой список
+    if (companyDocuments.length === 0) {
+      console.log(`[Company ${companyId}] No documents found for company`);
+      return res.json({
+        success: true,
+        data: {
+          documents: [],
+          has_more: false,
+          next_cursor: null
+        }
+      });
     }
 
-    // Получаем список базы знаний из ElevenLabs
-    const knowledgeBaseData = await elevenLabsService.getKnowledgeBase(
+    // Получаем полную базу знаний из ElevenLabs
+    const elevenLabsKnowledgeBase = await elevenLabsService.getKnowledgeBase(
       cursor as string,
       page_size ? parseInt(page_size as string) : 30
     );
-
-    res.json({
-      message: 'Список базы знаний получен',
-      ...knowledgeBaseData,
-      retrieved_at: new Date()
-    });
-  } catch (error: any) {
-    console.error('Error getting knowledge base:', error);
-    res.status(500).json({ 
-      message: 'Ошибка при получении списка базы знаний',
-      details: error.message 
-    });
-  }
-};
-
-// Обновление агента
-export const updateAgent = async (req: Request, res: Response) => {
-  try {
-    const adminId = req.user!.userId;
-    const agentId = req.params.id;
-    const updateData = req.body;
-
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
-    }
-
-    // Проверяем, существует ли агент в нашей базе
-    const localAgent = await ElevenLabsAgent.findOne({ agent_id: agentId, adminId });
-    if (!localAgent) {
-      return res.status(404).json({ message: 'Агент не найден в локальной базе данных' });
-    }
-
-    // Обновляем агента в ElevenLabs
-    const updatedAgent = await elevenLabsService.updateAgent(agentId, updateData);
-
-    // Синхронизируем обновленные данные с MongoDB
-    const savedAgent = await ElevenLabsAgent.findOneAndUpdate(
-      { agent_id: agentId, adminId },
-      {
-        ...updatedAgent,
-        tags: updatedAgent.tags || [],
-        adminId,
-        synced_at: new Date()
-      },
-      { new: true }
+    
+    // Фильтруем документы только по тем, которые принадлежат компании
+    const companyDocumentIds = new Set(companyDocuments.map(doc => doc.elevenLabsDocumentId));
+    const filteredDocuments = elevenLabsKnowledgeBase.documents.filter(doc => 
+      companyDocumentIds.has(doc.id)
     );
 
-    res.json({
-      message: 'Агент успешно обновлен',
-      ...updatedAgent,
-      synced: true,
-      synced_at: savedAgent?.synced_at || new Date(),
-      updated_at: new Date()
+    // Получаем все агенты компании для маппинга ID
+    const localAgents = await prisma.agent.findMany({
+      where: { companyId },
+      select: {
+        id: true,
+        name: true,
+        elevenLabsAgentId: true
+      }
     });
-  } catch (error: any) {
-    console.error('Error updating agent:', error);
+    
+    // Создаем маппинг ElevenLabs ID → локальный ID
+    const agentIdMapping = new Map<string, {id: string, name: string}>();
+    localAgents.forEach(agent => {
+      if (agent.elevenLabsAgentId) {
+        agentIdMapping.set(agent.elevenLabsAgentId, {
+          id: agent.id,
+          name: agent.name
+        });
+      }
+    });
+    
+    // Обновляем dependent_agents в каждом документе
+    const updatedDocuments = filteredDocuments.map(doc => {
+      if (doc.dependent_agents && doc.dependent_agents.length > 0) {
+        const updatedDependentAgents = doc.dependent_agents.map(depAgent => {
+          const localAgent = agentIdMapping.get(depAgent.id);
+          if (localAgent) {
+            return {
+              ...depAgent,
+              id: localAgent.id,
+              name: localAgent.name
+            };
+          }
+          return depAgent; // Если локального агента нет, оставляем как есть
+        });
+        
+        return {
+          ...doc,
+          dependent_agents: updatedDependentAgents
+        };
+      }
+      return doc;
+    });
+    
+    console.log(`[Company ${companyId}] Knowledge base fetched successfully with ${updatedDocuments.length} documents (filtered from ${elevenLabsKnowledgeBase.documents.length} total)`);
+    console.log(`[Company ${companyId}] Mapped ${agentIdMapping.size} agent IDs`);
+
+    res.json({
+      success: true,
+      data: {
+        documents: updatedDocuments,
+        has_more: false, // Устанавливаем false, так как мы делаем собственную фильтрацию
+        next_cursor: null
+      }
+    });
+  } catch (error) {
+    console.error(`[Company ${req.user?.companyId}] Error fetching knowledge base:`, error);
     res.status(500).json({ 
-      message: 'Ошибка при обновлении агента',
-      details: error.message 
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
 
-// Получение списка разговоров агентов
-export const getConversations = async (req: Request, res: Response) => {
+// Получить базу знаний по ID
+export const getKnowledgeBaseById = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const adminId = req.user!.userId;
+    const { companyId } = req.user!;
+    const { id } = req.params;
+    
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Company ID not found'
+      });
+    }
+    
+    console.log(`[Company ${companyId}] Getting knowledge base by ID: ${id}`);
+
+    // Проверяем, принадлежит ли документ компании
+    const companyDocument = await prisma.companyKnowledgeBase.findFirst({
+      where: {
+        companyId,
+        elevenLabsDocumentId: id
+      }
+    });
+
+    if (!companyDocument) {
+      console.log(`[Company ${companyId}] Document ${id} not found or not owned by company`);
+      return res.status(404).json({
+        success: false,
+        message: 'База знаний не найдена или не принадлежит вашей компании'
+      });
+    }
+
+    // Получение детальной информации о базе знаний
+    const knowledgeBase = await elevenLabsService.getKnowledgeBaseById(id);
+
+    console.log(`[Company ${companyId}] Knowledge base retrieved successfully:`, {
+      id: knowledgeBase.id,
+      name: knowledgeBase.name,
+      type: knowledgeBase.type
+    });
+
+    res.json({
+      success: true,
+      data: knowledgeBase
+    });
+  } catch (error: any) {
+    console.error(`[Company ${req.user?.companyId}] Error getting knowledge base by ID:`, error);
+    
+    if (error.message.includes('не найдена')) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'База знаний не найдена'
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false,
+      message: 'Ошибка при получении базы знаний'
+    });
+  }
+};
+
+// Удалить базу знаний по ID
+export const deleteKnowledgeBase = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { companyId } = req.user!;
+    const { id } = req.params;
+    
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Company ID not found'
+      });
+    }
+    
+    console.log(`[Company ${companyId}] Deleting knowledge base: ${id}`);
+
+    // Проверяем, принадлежит ли документ компании
+    const companyDocument = await prisma.companyKnowledgeBase.findFirst({
+      where: {
+        companyId,
+        elevenLabsDocumentId: id
+      }
+    });
+
+    if (!companyDocument) {
+      console.log(`[Company ${companyId}] Document ${id} not found or not owned by company`);
+      return res.status(404).json({
+        success: false,
+        message: 'База знаний не найдена или не принадлежит вашей компании'
+      });
+    }
+
+    // Удаление базы знаний из ElevenLabs
+    await elevenLabsService.deleteKnowledgeBase(id);
+
+    // Удаляем запись из локальной базы данных
+    await prisma.companyKnowledgeBase.delete({
+      where: {
+        id: companyDocument.id
+      }
+    });
+
+    console.log(`[Company ${companyId}] Knowledge base deleted successfully: ${id}`);
+
+    res.json({
+      success: true,
+      message: 'База знаний успешно удалена'
+    });
+  } catch (error: any) {
+    console.error(`[Company ${req.user?.companyId}] Error deleting knowledge base:`, error);
+    
+    if (error.message.includes('не найдена')) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'База знаний не найдена'
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false,
+      message: 'Ошибка при удалении базы знаний'
+    });
+  }
+};
+
+// Обновить агента
+export const updateAgent = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { companyId } = req.user!;
+    const { id } = req.params;
+    const updateData = req.body;
+    
+    console.log(`[Company ${companyId}] Updating agent: ${id}`);
+    console.log('Original update data:', JSON.stringify(updateData, null, 2));
+    
+    // Проверяем, что агент существует и принадлежит компании
+    const agent = await prisma.agent.findUnique({
+      where: { 
+        id,
+        companyId 
+      }
+    });
+    
+    if (!agent) {
+      console.log(`[Company ${companyId}] Agent not found for update: ${id}`);
+      return res.status(404).json({
+        success: false,
+        message: 'Agent not found'
+      });
+    }
+    
+    if (!agent.elevenLabsAgentId) {
+      console.log(`[Company ${companyId}] Agent has no ElevenLabs ID: ${id}`);
+      return res.status(400).json({
+        success: false,
+        message: 'Agent is not synced with ElevenLabs'
+      });
+    }
+    
+    // Валидируем и преобразуем данные для ElevenLabs API
+    const transformedUpdateData = validateAndTransformUpdateData(updateData);
+    console.log('Transformed update data:', JSON.stringify(transformedUpdateData, null, 2));
+    
+    // Обновляем агента в ElevenLabs
+    const updatedElevenLabsAgent = await elevenLabsService.updateAgent(agent.elevenLabsAgentId, transformedUpdateData);
+    
+    console.log(`[Company ${companyId}] Agent updated in ElevenLabs: ${agent.elevenLabsAgentId}`);
+    
+    // Синхронизируем данные с локальной базой данных
+    const updatedAgent = await prisma.agent.update({
+      where: { id: agent.id },
+      data: {
+        name: updatedElevenLabsAgent.name,
+        language: updatedElevenLabsAgent.conversation_config.agent.language || agent.language,
+        voiceId: updatedElevenLabsAgent.conversation_config.tts.voice_id || agent.voiceId,
+        voiceStability: updatedElevenLabsAgent.conversation_config.tts.stability || agent.voiceStability,
+        voiceSimilarityBoost: updatedElevenLabsAgent.conversation_config.tts.similarity_boost || agent.voiceSimilarityBoost,
+        voiceSpeed: updatedElevenLabsAgent.conversation_config.tts.speed || agent.voiceSpeed,
+        greetingTemplate: updatedElevenLabsAgent.conversation_config.agent.first_message || agent.greetingTemplate,
+        aiModel: updatedElevenLabsAgent.conversation_config.agent.prompt.llm || agent.aiModel,
+        aiContextPrompt: updatedElevenLabsAgent.conversation_config.agent.prompt.prompt || agent.aiContextPrompt,
+        updatedAt: new Date()
+      }
+    });
+    
+    console.log(`[Company ${companyId}] Agent updated successfully: ${updatedAgent.id}`);
+    
+    res.json({
+      success: true,
+      data: updatedAgent,
+      message: 'Agent updated successfully'
+    });
+  } catch (error) {
+    console.error(`[Company ${req.user?.companyId}] Error updating agent:`, error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Получить статистику синхронизации
+export const getSyncStats = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { companyId } = req.user!;
+    
+    console.log(`[Company ${companyId}] Fetching sync stats`);
+    
+    const localAgents = await prisma.agent.findMany({
+      where: { companyId }
+    });
+    const elevenLabsResponse = await elevenLabsService.getAgents();
+    
+    const stats = {
+      localAgents: localAgents.length,
+      elevenLabsAgents: elevenLabsResponse.agents.length,
+      syncedAgents: localAgents.filter(agent => agent.elevenLabsAgentId).length,
+      lastSync: localAgents.length > 0 ? localAgents[0].updatedAt : null
+    };
+    
+    console.log(`[Company ${companyId}] Sync stats:`, stats);
+    
+    res.json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    console.error(`[Company ${req.user?.companyId}] Error fetching sync stats:`, error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Получить список разговоров
+export const getConversations = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { companyId } = req.user!;
     const { 
       cursor, 
       agent_id, 
       call_successful, 
       call_start_before_unix, 
       call_start_after_unix, 
-      page_size 
+      page_size = 10 
     } = req.query;
+    
+    console.log(`[Company ${companyId}] Fetching conversations with filters:`, {
+      cursor,
+      agent_id,
+      call_successful,
+      call_start_before_unix,
+      call_start_after_unix,
+      page_size
+    });
 
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
+    // Получаем всех агентов компании
+    const companyAgents = await prisma.agent.findMany({
+      where: { 
+        companyId,
+        elevenLabsAgentId: { not: null }
+      },
+      select: {
+        id: true,
+        name: true,
+        elevenLabsAgentId: true
+      }
+    });
+
+    console.log(`[Company ${companyId}] Found ${companyAgents.length} agents for company`);
+
+    // Если у компании нет агентов, возвращаем пустой список
+    if (companyAgents.length === 0) {
+      console.log(`[Company ${companyId}] No agents found for company`);
+      return res.json({
+        success: true,
+        data: {
+          conversations: [],
+          has_more: false,
+          next_cursor: null
+        }
+      });
     }
 
-    // Получаем список разговоров из ElevenLabs
-    const conversationsData = await elevenLabsService.getConversations({
-      cursor: cursor as string,
-      agent_id: agent_id as string,
-      call_successful: call_successful as 'success' | 'failure' | 'unknown',
-      call_start_before_unix: call_start_before_unix ? parseInt(call_start_before_unix as string) : undefined,
-      call_start_after_unix: call_start_after_unix ? parseInt(call_start_after_unix as string) : undefined,
-      page_size: page_size ? parseInt(page_size as string) : 100
+    let targetAgentElevenLabsIds: string[] = [];
+
+    // Если указан конкретный agent_id, проверяем что он принадлежит компании
+    if (agent_id) {
+      const agent = companyAgents.find(agent => agent.id === agent_id);
+      
+      if (!agent) {
+        console.log(`[Company ${companyId}] Agent not found or doesn't belong to company: ${agent_id}`);
+        return res.status(404).json({
+          success: false,
+          message: 'Agent not found'
+        });
+      }
+
+      if (!agent.elevenLabsAgentId) {
+        console.log(`[Company ${companyId}] Agent has no ElevenLabs ID: ${agent_id}`);
+        return res.json({
+          success: true,
+          data: {
+            conversations: [],
+            has_more: false,
+            next_cursor: null
+          }
+        });
+      }
+
+      targetAgentElevenLabsIds = [agent.elevenLabsAgentId];
+    } else {
+      // Если agent_id не указан, используем всех агентов компании
+      targetAgentElevenLabsIds = companyAgents
+        .filter(agent => agent.elevenLabsAgentId)
+        .map(agent => agent.elevenLabsAgentId!);
+    }
+
+    console.log(`[Company ${companyId}] Filtering conversations by agent IDs:`, targetAgentElevenLabsIds);
+
+    // Получаем разговоры для каждого агента и объединяем результаты
+    let allConversations: any[] = [];
+    let hasMore = false;
+    let nextCursor: string | null = null;
+
+    // Для оптимизации, сначала попробуем получить разговоры без фильтра по агенту
+    // и затем отфильтруем их локально
+    const filters: any = {};
+    if (cursor) filters.cursor = cursor as string;
+    if (call_successful) filters.call_successful = call_successful as string;
+    if (call_start_before_unix) filters.call_start_before_unix = parseInt(call_start_before_unix as string);
+    if (call_start_after_unix) filters.call_start_after_unix = parseInt(call_start_after_unix as string);
+    
+    // Увеличиваем page_size чтобы получить больше данных для фильтрации
+    // Ограничиваем максимальным значением 100 чтобы не превышать лимиты ElevenLabs API
+    const requestPageSize = Math.min(Math.max(parseInt(page_size as string) * 2, 50), 100);
+    filters.page_size = requestPageSize;
+
+    // Получаем разговоры из ElevenLabs
+    const conversationsResponse = await elevenLabsService.getConversations(filters);
+    
+    // Фильтруем разговоры только по агентам компании
+    const filteredConversations = conversationsResponse.conversations.filter(conversation => 
+      targetAgentElevenLabsIds.includes(conversation.agent_id)
+    );
+
+    // Создаем маппинг ElevenLabs Agent ID → локальный Agent
+    const agentIdMapping = new Map<string, {id: string, name: string}>();
+    companyAgents.forEach(agent => {
+      if (agent.elevenLabsAgentId) {
+        agentIdMapping.set(agent.elevenLabsAgentId, {
+          id: agent.id,
+          name: agent.name
+        });
+      }
     });
 
-    res.json({
-      message: 'Список разговоров получен',
-      ...conversationsData,
-      retrieved_at: new Date()
+    // Обновляем agent_id в каждом разговоре на локальный ID
+    const updatedConversations = filteredConversations.map(conversation => {
+      const localAgent = agentIdMapping.get(conversation.agent_id);
+      if (localAgent) {
+        return {
+          ...conversation,
+          agent_id: localAgent.id,
+          agent_name: localAgent.name
+        };
+      }
+      return conversation;
     });
-  } catch (error: any) {
-    console.error('Error getting conversations:', error);
+
+    // Ограничиваем результат до запрошенного page_size
+    const requestedPageSize = parseInt(page_size as string);
+    const paginatedConversations = updatedConversations.slice(0, requestedPageSize);
+    
+    // Определяем есть ли еще данные
+    hasMore = updatedConversations.length > requestedPageSize || conversationsResponse.has_more;
+    nextCursor = hasMore ? conversationsResponse.next_cursor : null;
+    
+    console.log(`[Company ${companyId}] Retrieved ${paginatedConversations.length} conversations (filtered from ${conversationsResponse.conversations.length} total)`);
+    console.log(`[Company ${companyId}] Mapped ${agentIdMapping.size} agent IDs`);
+
+    res.json({
+      success: true,
+      data: {
+        conversations: paginatedConversations,
+        has_more: hasMore,
+        next_cursor: nextCursor
+      }
+    });
+  } catch (error) {
+    console.error(`[Company ${req.user?.companyId}] Error fetching conversations:`, error);
     res.status(500).json({ 
-      message: 'Ошибка при получении списка разговоров',
-      details: error.message 
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
 
-// Получение детальной информации о разговоре по ID
-export const getConversationById = async (req: Request, res: Response) => {
+// Получить детали конкретного разговора
+export const getConversationById = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const adminId = req.user!.userId;
-    const conversationId = req.params.id;
+    const { companyId } = req.user!;
+    const { id } = req.params;
+    
+    console.log(`[Company ${companyId}] Fetching conversation details: ${id}`);
 
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
+    // Получаем всех агентов компании для проверки доступа
+    const companyAgents = await prisma.agent.findMany({
+      where: { 
+        companyId,
+        elevenLabsAgentId: { not: null }
+      },
+      select: {
+        id: true,
+        name: true,
+        elevenLabsAgentId: true
+      }
+    });
+
+    if (companyAgents.length === 0) {
+      console.log(`[Company ${companyId}] No agents found for company`);
+      return res.status(404).json({
+        success: false,
+        message: 'У компании нет агентов'
+      });
     }
 
-    // Получаем детальную информацию о разговоре из ElevenLabs
-    const conversationData = await elevenLabsService.getConversationById(conversationId);
+    // Получаем детали разговора из ElevenLabs
+    const conversation = await elevenLabsService.getConversationById(id);
+    
+    // Проверяем, принадлежит ли разговор агентам компании
+    const companyAgentIds = companyAgents
+      .filter(agent => agent.elevenLabsAgentId)
+      .map(agent => agent.elevenLabsAgentId!);
+    
+    if (!companyAgentIds.includes(conversation.agent_id)) {
+      console.log(`[Company ${companyId}] Conversation ${id} does not belong to company agents`);
+      return res.status(404).json({
+        success: false,
+        message: 'Разговор не найден или не принадлежит вашей компании'
+      });
+    }
+
+    // Создаем маппинг ElevenLabs Agent ID → локальный Agent
+    const agentIdMapping = new Map<string, {id: string, name: string}>();
+    companyAgents.forEach(agent => {
+      if (agent.elevenLabsAgentId) {
+        agentIdMapping.set(agent.elevenLabsAgentId, {
+          id: agent.id,
+          name: agent.name
+        });
+      }
+    });
+
+    // Обновляем agent_id в разговоре на локальный ID и добавляем agent_name
+    const localAgent = agentIdMapping.get(conversation.agent_id);
+    const updatedConversation = {
+      ...conversation,
+      agent_id: localAgent ? localAgent.id : conversation.agent_id,
+      agent_name: localAgent ? localAgent.name : 'Unknown Agent'
+    };
+    
+    console.log(`[Company ${companyId}] Conversation details retrieved successfully: ${id}`);
 
     res.json({
-      message: 'Детали разговора получены',
-      ...conversationData,
-      retrieved_at: new Date()
+      success: true,
+      data: updatedConversation
     });
   } catch (error: any) {
-    console.error('Error getting conversation details:', error);
+    console.error(`[Company ${req.user?.companyId}] Error fetching conversation details:`, error);
+    
+    if (error.message && (error.message.includes('не найден') || error.message.includes('not found'))) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Разговор не найден'
+      });
+    }
+    
     res.status(500).json({ 
-      message: 'Ошибка при получении деталей разговора',
-      details: error.message 
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
 
-// Получение аудио файла разговора по ID
-export const getConversationAudio = async (req: Request, res: Response) => {
+// Получить аудио разговора
+export const getConversationAudio = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const adminId = req.user!.userId;
-    const conversationId = req.params.id;
+    const { companyId } = req.user!;
+    const { id } = req.params;
+    
+    console.log(`[Company ${companyId}] Fetching conversation audio: ${id}`);
 
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
+    // Получаем всех агентов компании для проверки доступа
+    const companyAgents = await prisma.agent.findMany({
+      where: { 
+        companyId,
+        elevenLabsAgentId: { not: null }
+      },
+      select: {
+        elevenLabsAgentId: true
+      }
+    });
+
+    if (companyAgents.length === 0) {
+      console.log(`[Company ${companyId}] No agents found for company`);
+      return res.status(404).json({
+        success: false,
+        message: 'У компании нет агентов'
+      });
     }
 
-    // Получаем аудио файл разговора из ElevenLabs
-    const audioBuffer = await elevenLabsService.getConversationAudio(conversationId);
+    // Сначала получаем детали разговора для проверки доступа
+    const conversation = await elevenLabsService.getConversationById(id);
+    
+    // Проверяем, принадлежит ли разговор агентам компании
+    const companyAgentIds = companyAgents
+      .filter(agent => agent.elevenLabsAgentId)
+      .map(agent => agent.elevenLabsAgentId!);
+    
+    if (!companyAgentIds.includes(conversation.agent_id)) {
+      console.log(`[Company ${companyId}] Conversation ${id} does not belong to company agents`);
+      return res.status(404).json({
+        success: false,
+        message: 'Разговор не найден или не принадлежит вашей компании'
+      });
+    }
 
-    // Устанавливаем правильные заголовки для аудио файла
+    // Получаем аудио из ElevenLabs
+    const audioBuffer = await elevenLabsService.getConversationAudio(id);
+    
+    console.log(`[Company ${companyId}] Conversation audio retrieved successfully: ${id}`);
+
+    // Устанавливаем правильные заголовки для аудио
     res.set({
       'Content-Type': 'audio/mpeg',
-      'Content-Disposition': `attachment; filename="conversation_${conversationId}.mp3"`,
-      'Content-Length': audioBuffer.length.toString()
+      'Content-Length': audioBuffer.length.toString(),
+      'Content-Disposition': `attachment; filename="conversation_${id}.mp3"`
     });
 
     res.send(audioBuffer);
   } catch (error: any) {
-    console.error('Error getting conversation audio:', error);
+    console.error(`[Company ${req.user?.companyId}] Error fetching conversation audio:`, error);
+    
+    if (error.message && (error.message.includes('не найден') || error.message.includes('not found'))) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Аудио разговора не найдено'
+      });
+    }
+    
     res.status(500).json({ 
-      message: 'Ошибка при получении аудио файла разговора',
-      details: error.message 
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
 
-// Удаление разговора по ID
-export const deleteConversation = async (req: Request, res: Response) => {
+// Получить информацию о RAG индексе
+export const getRagIndexOverview = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const adminId = req.user!.userId;
-    const conversationId = req.params.id;
-
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
-    }
-
-    // Удаляем разговор из ElevenLabs
-    await elevenLabsService.deleteConversation(conversationId);
+    const { companyId } = req.user!;
+    
+    console.log(`[Company ${companyId}] Fetching RAG index overview`);
+    
+    // Получаем информацию о RAG индексе из ElevenLabs
+    const ragIndexData = await elevenLabsService.getRagIndexOverview();
+    
+    console.log(`[Company ${companyId}] RAG index overview retrieved successfully`, {
+      totalUsedBytes: ragIndexData.total_used_bytes,
+      totalMaxBytes: ragIndexData.total_max_bytes,
+      modelsCount: ragIndexData.models?.length || 0
+    });
 
     res.json({
-      message: 'Разговор успешно удален',
-      conversation_id: conversationId,
-      deleted_at: new Date()
+      success: true,
+      data: ragIndexData
     });
-  } catch (error: any) {
-    console.error('Error deleting conversation:', error);
+  } catch (error) {
+    console.error(`[Company ${req.user?.companyId}] Error fetching RAG index overview:`, error);
     res.status(500).json({ 
-      message: 'Ошибка при удалении разговора',
-      details: error.message 
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
 
-// Создание нового агента
-export const createAgent = async (req: Request, res: Response) => {
+// Создать базу знаний
+export const createKnowledgeBase = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const adminId = req.user!.userId;
-    const { name } = req.body;
+    const { companyId } = req.user!;
+    
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Company ID not found'
+      });
+    }
+    
+    const { url, text, name } = req.body;
+    
+    console.log(`[Company ${companyId}] Creating knowledge base`, { url, text: text ? 'provided' : 'not provided', name });
 
-    console.log('=== КОНТРОЛЛЕР СОЗДАНИЯ АГЕНТА ===');
-    console.log('Admin ID:', adminId);
-    console.log('Request body:', JSON.stringify(req.body, null, 2));
-    console.log('Extracted name:', name);
+    let knowledgeBase;
 
-    // Валидация входных данных
-    if (!name || typeof name !== 'string' || name.trim().length === 0) {
-      console.log('Валидация не прошла: некорректное имя');
-      return res.status(400).json({ 
-        message: 'Имя агента обязательно и должно быть непустой строкой' 
+    if (url) {
+      // Создание базы знаний из URL
+      console.log(`[Company ${companyId}] Creating knowledge base from URL: ${url}`);
+      knowledgeBase = await elevenLabsService.createKnowledgeBase({ url });
+    } else if (text && name) {
+      // Создание базы знаний из текста
+      console.log(`[Company ${companyId}] Creating knowledge base from text: ${name}`);
+      knowledgeBase = await elevenLabsService.createKnowledgeBaseFromText({ text, name });
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: 'Необходимо указать либо URL, либо text и name'
       });
     }
 
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      console.log('Администратор не найден');
-      return res.status(404).json({ message: 'Администратор не найден' });
-    }
+    // Сохраняем связь документа с компанией в локальной базе данных
+    await prisma.companyKnowledgeBase.create({
+      data: {
+        companyId,
+        elevenLabsDocumentId: knowledgeBase.id,
+        documentName: knowledgeBase.name,
+        documentType: url ? 'url' : 'text',
+        createdBy: req.user!.id
+      }
+    });
 
-    console.log('Администратор найден:', `${admin.firstName} ${admin.lastName}`);
-    console.log('Вызываем elevenLabsService.createAgent с именем:', name.trim());
+    console.log(`[Company ${companyId}] Knowledge base created successfully and linked to company:`, {
+      id: knowledgeBase.id,
+      name: knowledgeBase.name
+    });
 
-    // Создаем агента в ElevenLabs
-    const newAgent = await elevenLabsService.createAgent({ name: name.trim() });
-
-    console.log('Агент успешно создан в ElevenLabs, ID:', newAgent.agent_id);
-
-    // Сохраняем агента в MongoDB
-    const savedAgent = await ElevenLabsAgent.findOneAndUpdate(
-      { agent_id: newAgent.agent_id },
-      {
-        ...newAgent,
-        adminId,
-        synced_at: new Date()
-      },
-      { upsert: true, new: true }
-    );
-
-    console.log('Агент сохранен в MongoDB');
-
-    const response = {
-      message: 'Агент успешно создан',
-      ...newAgent,
-      synced: true,
-      synced_at: savedAgent.synced_at,
-      created_at: new Date()
-    };
-
-    console.log('Отправляем ответ клиенту');
-    res.status(201).json(response);
+    res.json({
+      success: true,
+      data: knowledgeBase,
+      message: 'База знаний успешно создана'
+    });
   } catch (error: any) {
-    console.error('=== ОШИБКА В КОНТРОЛЛЕРЕ ===');
-    console.error('Error creating agent:', error);
-    console.error('Error stack:', error.stack);
+    console.error(`[Company ${req.user?.companyId}] Error creating knowledge base:`, error);
+    
+    // Возвращаем более детальное сообщение об ошибке
+    if (error.message.includes('ReadabilityError') || error.message.includes('прочитать содержимое')) {
+      return res.status(400).json({ 
+        success: false,
+        message: error.message
+      });
+    }
+    
     res.status(500).json({ 
-      message: 'Ошибка при создании агента',
-      details: error.message 
+      success: false,
+      message: 'Ошибка при создании базы знаний'
     });
   }
 };
 
-export const createKnowledgeBaseFromFile = async (req: Request, res: Response) => {
+// Создать базу знаний из текста
+export const createKnowledgeBaseFromText = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const adminId = req.user!.userId;
-    const file = (req as any).file as Express.Multer.File;
+    const { companyId } = req.user!;
+    
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Company ID not found'
+      });
+    }
+    
+    const { text, name } = req.body;
+    
+    console.log(`[Company ${companyId}] Creating knowledge base from text: ${name}`);
 
-    if (!file) {
-      return res.status(400).json({ message: 'Файл обязателен для создания базы знаний' });
+    if (!text || !name) {
+      return res.status(400).json({
+        success: false,
+        message: 'Необходимо указать text и name'
+      });
     }
 
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
-    }
+    // Создание базы знаний из текста
+    const knowledgeBase = await elevenLabsService.createKnowledgeBaseFromText({ text, name });
 
-    console.log('=== СОЗДАНИЕ БАЗЫ ЗНАНИЙ ИЗ ФАЙЛА ===');
-    console.log('Admin ID:', adminId);
-    console.log('File info:', {
-      originalname: file.originalname,
-      mimetype: file.mimetype,
-      size: file.size
+    // Сохраняем связь документа с компанией в локальной базе данных
+    await prisma.companyKnowledgeBase.create({
+      data: {
+        companyId,
+        elevenLabsDocumentId: knowledgeBase.id,
+        documentName: knowledgeBase.name,
+        documentType: 'text',
+        createdBy: req.user!.id
+      }
     });
 
-    // Создаем базу знаний из файла в ElevenLabs
-    const knowledgeBaseData = await elevenLabsService.createKnowledgeBaseFromFile({
+    console.log(`[Company ${companyId}] Knowledge base created from text successfully and linked to company:`, {
+      id: knowledgeBase.id,
+      name: knowledgeBase.name
+    });
+
+    res.json({
+      success: true,
+      data: knowledgeBase,
+      message: 'База знаний из текста успешно создана'
+    });
+  } catch (error: any) {
+    console.error(`[Company ${req.user?.companyId}] Error creating knowledge base from text:`, error);
+    
+    res.status(500).json({ 
+      success: false,
+      message: 'Ошибка при создании базы знаний из текста'
+    });
+  }
+};
+
+// Создать базу знаний из файла
+export const createKnowledgeBaseFromFile = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { companyId } = req.user!;
+    
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Company ID not found'
+      });
+    }
+    
+    const { name } = req.body;
+    const file = req.file;
+    
+    console.log(`[Company ${companyId}] Creating knowledge base from file: ${file?.originalname}`);
+
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        message: 'Необходимо прикрепить файл'
+      });
+    }
+
+    // Создание базы знаний из файла
+    const knowledgeBase = await elevenLabsService.createKnowledgeBaseFromFile({
       file: file.buffer,
       filename: file.originalname,
       mimetype: file.mimetype
     });
 
-    console.log('База знаний из файла успешно создана:', JSON.stringify(knowledgeBaseData, null, 2));
+    // Сохраняем связь документа с компанией в локальной базе данных
+    await prisma.companyKnowledgeBase.create({
+      data: {
+        companyId,
+        elevenLabsDocumentId: knowledgeBase.id,
+        documentName: knowledgeBase.name,
+        documentType: 'file',
+        createdBy: req.user!.id
+      }
+    });
 
-    res.status(201).json({
-      message: 'База знаний из файла успешно создана',
-      ...knowledgeBaseData,
-      created_at: new Date()
+    console.log(`[Company ${companyId}] Knowledge base created from file successfully and linked to company:`, {
+      id: knowledgeBase.id,
+      name: knowledgeBase.name,
+      filename: file.originalname
+    });
+
+    res.json({
+      success: true,
+      data: knowledgeBase,
+      message: 'База знаний из файла успешно создана'
     });
   } catch (error: any) {
-    console.error('=== ОШИБКА СОЗДАНИЯ БАЗЫ ЗНАНИЙ ИЗ ФАЙЛА ===');
-    console.error('Error creating knowledge base from file:', error);
-    console.error('Error stack:', error.stack);
-    res.status(500).json({ 
-      message: 'Ошибка при создании базы знаний из файла',
-      details: error.message 
-    });
-  }
-};
-
-export const createKnowledgeBaseFromText = async (req: Request, res: Response) => {
-  try {
-    const adminId = req.user!.userId;
-    const { text, name } = req.body;
-
-    if (!text || !name) {
-      return res.status(400).json({ message: 'Текст и название обязательны для создания базы знаний' });
-    }
-
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
-    }
-
-    console.log('=== СОЗДАНИЕ БАЗЫ ЗНАНИЙ ИЗ ТЕКСТА ===');
-    console.log('Admin ID:', adminId);
-    console.log('Name:', name);
-    console.log('Text length:', text.length);
-
-    // Создаем базу знаний из текста в ElevenLabs
-    const knowledgeBaseData = await elevenLabsService.createKnowledgeBaseFromText({
-      text,
-      name
-    });
-
-    console.log('База знаний из текста успешно создана:', JSON.stringify(knowledgeBaseData, null, 2));
-
-    res.status(201).json({
-      message: 'База знаний из текста успешно создана',
-      ...knowledgeBaseData,
-      created_at: new Date()
-    });
-  } catch (error: any) {
-    console.error('=== ОШИБКА СОЗДАНИЯ БАЗЫ ЗНАНИЙ ИЗ ТЕКСТА ===');
-    console.error('Error creating knowledge base from text:', error);
-    console.error('Error stack:', error.stack);
-    res.status(500).json({ 
-      message: 'Ошибка при создании базы знаний из текста',
-      details: error.message 
-    });
-  }
-};
-
-export const createKnowledgeBase = async (req: Request, res: Response) => {
-  try {
-    const adminId = req.user!.userId;
-    const { url } = req.body;
-
-    if (!url) {
-      return res.status(400).json({ message: 'URL обязателен для создания базы знаний' });
-    }
-
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
-    }
-
-    console.log('=== СОЗДАНИЕ БАЗЫ ЗНАНИЙ ===');
-    console.log('Admin ID:', adminId);
-    console.log('Request body:', JSON.stringify(req.body, null, 2));
-    console.log('URL для создания базы знаний:', url);
-
-    // Создаем базу знаний в ElevenLabs
-    const knowledgeBaseData = await elevenLabsService.createKnowledgeBase({ url });
-
-    console.log('База знаний успешно создана:', JSON.stringify(knowledgeBaseData, null, 2));
-
-    res.status(201).json({
-      message: 'База знаний успешно создана',
-      ...knowledgeBaseData,
-      created_at: new Date()
-    });
-  } catch (error: any) {
-    console.error('=== ОШИБКА СОЗДАНИЯ БАЗЫ ЗНАНИЙ ===');
-    console.error('Error creating knowledge base:', error);
-    console.error('Error stack:', error.stack);
-    res.status(500).json({ 
-      message: 'Ошибка при создании базы знаний',
-      details: error.message 
-    });
-  }
-};
-
-export const deleteKnowledgeBase = async (req: Request, res: Response) => {
-  try {
-    const adminId = req.user!.userId;
-    const { id } = req.params;
-
-    if (!id) {
-      return res.status(400).json({ message: 'ID базы знаний обязателен' });
-    }
-
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
-    }
-
-    console.log('=== УДАЛЕНИЕ БАЗЫ ЗНАНИЙ ===');
-    console.log('Admin ID:', adminId);
-    console.log('Knowledge Base ID:', id);
-
-    // Удаляем базу знаний в ElevenLabs
-    await elevenLabsService.deleteKnowledgeBase(id);
-
-    console.log('База знаний успешно удалена:', id);
-
-    res.status(200).json({
-      message: 'База знаний успешно удалена',
-      knowledge_base_id: id,
-      deleted_at: new Date()
-    });
-  } catch (error: any) {
-    console.error('=== ОШИБКА УДАЛЕНИЯ БАЗЫ ЗНАНИЙ ===');
-    console.error('Error deleting knowledge base:', error);
-    console.error('Error stack:', error.stack);
-    res.status(500).json({ 
-      message: 'Ошибка при удалении базы знаний',
-      details: error.message 
-    });
-  }
-};
-
-export const getKnowledgeBaseById = async (req: Request, res: Response) => {
-  try {
-    const adminId = req.user!.userId;
-    const { id } = req.params;
-
-    if (!id) {
-      return res.status(400).json({ message: 'ID базы знаний обязателен' });
-    }
-
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
-    }
-
-    console.log('=== ПОЛУЧЕНИЕ БАЗЫ ЗНАНИЙ ПО ID ===');
-    console.log('Admin ID:', adminId);
-    console.log('Knowledge Base ID:', id);
-
-    // Получаем детальную информацию о базе знаний из ElevenLabs
-    const knowledgeBaseDetail = await elevenLabsService.getKnowledgeBaseById(id);
-
-    console.log('База знаний успешно получена:', {
-      id: knowledgeBaseDetail.id,
-      name: knowledgeBaseDetail.name,
-      type: knowledgeBaseDetail.type
-    });
-
-    res.status(200).json(knowledgeBaseDetail);
-  } catch (error: any) {
-    console.error('=== ОШИБКА ПОЛУЧЕНИЯ БАЗЫ ЗНАНИЙ ===');
-    console.error('Error getting knowledge base:', error);
-    console.error('Error stack:', error.stack);
+    console.error(`[Company ${req.user?.companyId}] Error creating knowledge base from file:`, error);
     
-    if (error.message === 'База знаний не найдена') {
-      return res.status(404).json({ 
-        message: 'База знаний не найдена',
-        details: error.message 
+    res.status(500).json({ 
+      success: false,
+      message: 'Ошибка при создании базы знаний из файла'
+    });
+  }
+};
+
+// Миграция существующих документов базы знаний к компаниям
+export const migrateKnowledgeBaseToCompanies = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { companyId } = req.user!;
+    
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Company ID not found'
       });
     }
     
+    console.log(`[Company ${companyId}] Starting knowledge base migration`);
+
+    // Получаем все документы из ElevenLabs
+    const elevenLabsKnowledgeBase = await elevenLabsService.getKnowledgeBase();
+    
+    // Получаем уже существующие связи
+    const existingMappings = await prisma.companyKnowledgeBase.findMany({
+      select: { elevenLabsDocumentId: true }
+    });
+    const existingIds = new Set(existingMappings.map(m => m.elevenLabsDocumentId));
+
+    // Фильтруем только те документы, которые еще не привязаны к компаниям
+    const unmappedDocuments = elevenLabsKnowledgeBase.documents.filter(doc => 
+      !existingIds.has(doc.id)
+    );
+
+    if (unmappedDocuments.length === 0) {
+      console.log(`[Company ${companyId}] No unmapped documents found for migration`);
+      return res.json({
+        success: true,
+        message: 'Нет непривязанных документов для миграции',
+        data: {
+          migrated: 0,
+          skipped: existingMappings.length
+        }
+      });
+    }
+
+    // Создаем связи для всех непривязанных документов к текущей компании
+    const migrationsData = unmappedDocuments.map(doc => ({
+      companyId,
+      elevenLabsDocumentId: doc.id,
+      documentName: doc.name,
+      documentType: doc.type,
+      createdBy: req.user!.id
+    }));
+
+    await prisma.companyKnowledgeBase.createMany({
+      data: migrationsData
+    });
+
+    console.log(`[Company ${companyId}] Migrated ${unmappedDocuments.length} knowledge base documents to company`);
+
+    res.json({
+      success: true,
+      message: `Успешно мигрировано ${unmappedDocuments.length} документов к компании`,
+      data: {
+        migrated: unmappedDocuments.length,
+        skipped: existingMappings.length,
+        documents: unmappedDocuments.map(doc => ({
+          id: doc.id,
+          name: doc.name,
+          type: doc.type
+        }))
+      }
+    });
+  } catch (error: any) {
+    console.error(`[Company ${req.user?.companyId}] Error migrating knowledge base:`, error);
+    
     res.status(500).json({ 
-      message: 'Ошибка при получении базы знаний',
-      details: error.message 
+      success: false,
+      message: 'Ошибка при миграции базы знаний'
     });
   }
 };
-
-export const getRagIndexOverview = async (req: Request, res: Response) => {
-  try {
-    const adminId = req.user!.userId;
-
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
-    }
-
-    console.log('=== ПОЛУЧЕНИЕ RAG INDEX OVERVIEW ===');
-    console.log('Admin ID:', adminId);
-
-    // Получаем информацию о RAG индексе из ElevenLabs
-    const ragIndexData = await elevenLabsService.getRagIndexOverview();
-
-    console.log('RAG Index Overview успешно получен:', {
-      total_used_bytes: ragIndexData.total_used_bytes,
-      total_max_bytes: ragIndexData.total_max_bytes,
-      models_count: ragIndexData.models.length
-    });
-
-    res.status(200).json(ragIndexData);
-  } catch (error: any) {
-    console.error('=== ОШИБКА ПОЛУЧЕНИЯ RAG INDEX OVERVIEW ===');
-    console.error('Error getting RAG index overview:', error);
-    console.error('Error stack:', error.stack);
-    
-    res.status(500).json({ 
-      message: 'Ошибка при получении информации о RAG индексе',
-      details: error.message 
-    });
-  }
-};
-
-export const getConversationSignedUrl = async (req: Request, res: Response) => {
-  try {
-    const adminId = req.user!.userId;
-    const { agent_id } = req.query;
-
-    if (!agent_id || typeof agent_id !== 'string') {
-      return res.status(400).json({ message: 'agent_id обязателен в query параметрах' });
-    }
-
-    const admin = await User.findById(adminId);
-    if (!admin) {
-      return res.status(404).json({ message: 'Администратор не найден' });
-    }
-
-    console.log('=== ПОЛУЧЕНИЕ ПОДПИСАННОГО URL ДЛЯ РАЗГОВОРА ===');
-    console.log('Admin ID:', adminId);
-    console.log('Agent ID:', agent_id);
-
-    // Получаем подписанный URL для WebSocket соединения из ElevenLabs
-    const signedUrlData = await elevenLabsService.getConversationSignedUrl(agent_id);
-
-    console.log('Подписанный URL успешно получен для агента:', agent_id);
-
-    res.status(200).json(signedUrlData);
-  } catch (error: any) {
-    console.error('=== ОШИБКА ПОЛУЧЕНИЯ ПОДПИСАННОГО URL ===');
-    console.error('Error getting conversation signed URL:', error);
-    console.error('Error stack:', error.stack);
-    
-    res.status(500).json({ 
-      message: 'Ошибка при получении подписанного URL для разговора',
-      details: error.message 
-    });
-  }
-}; 

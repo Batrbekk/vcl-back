@@ -442,6 +442,73 @@ interface ConversationSignedUrl {
   signed_url: string;
 }
 
+// SIP Trunk Phone Number interfaces
+interface CreateSIPTrunkPhoneNumberRequest {
+  label: string;
+  phone_number: string;
+  termination_uri: string; // Обязательное поле для SIP trunk
+  transport?: 'auto' | 'udp' | 'tcp' | 'tls';
+  media_encryption?: 'disabled' | 'allowed' | 'required';
+  credentials?: {
+    username: string;
+    password: string;
+  };
+  headers?: Record<string, string>;
+}
+
+interface CreateSIPTrunkPhoneNumberResponse {
+  phone_number_id: string;
+  phone_number: string;
+  label: string;
+  status: 'active' | 'pending' | 'failed';
+  created_at: string;
+}
+
+interface CreateTwilioPhoneNumberRequest {
+  label: string;
+  phone_number: string;
+  sid: string;
+  token: string;
+}
+
+interface CreateTwilioPhoneNumberResponse {
+  phone_number_id: string;
+  phone_number: string;
+  label: string;
+  status: 'active' | 'pending' | 'failed';
+  created_at: string;
+}
+
+// Phone Numbers List interfaces
+interface PhoneNumberTwilio {
+  phone_number: string;
+  label: string;
+  phone_number_id: string;
+  assigned_agent?: {
+    agent_id: string;
+    agent_name: string;
+  };
+  provider: 'twilio';
+}
+
+interface PhoneNumberSIPTrunk {
+  phone_number: string;
+  label: string;
+  phone_number_id: string;
+  assigned_agent?: {
+    agent_id: string;
+    agent_name: string;
+  };
+  provider: 'sip_trunk';
+  address?: string;
+}
+
+type PhoneNumber = PhoneNumberTwilio | PhoneNumberSIPTrunk;
+
+interface GetPhoneNumbersResponse {
+  phone_numbers: PhoneNumber[];
+}
+
 export class ElevenLabsService {
   private readonly apiKey: string;
   private readonly apiUrl: string;
@@ -1037,6 +1104,187 @@ export class ElevenLabsService {
       console.error('Response data:', JSON.stringify(error.response?.data, null, 2));
       
       throw new Error(`Не удалось получить подписанный URL для разговора: ${error.response?.data?.detail?.message || error.message}`);
+    }
+  }
+
+  /**
+   * Создание SIP trunk номера телефона через API Eleven Labs
+   */
+  async createSIPTrunkPhoneNumber(phoneData: CreateSIPTrunkPhoneNumberRequest): Promise<CreateSIPTrunkPhoneNumberResponse> {
+    try {
+      console.log('=== СОЗДАНИЕ SIP TRUNK НОМЕРА В ELEVENLABS ===');
+      console.log('Phone data:', {
+        label: phoneData.label,
+        phone_number: phoneData.phone_number,
+        transport: phoneData.transport,
+        media_encryption: phoneData.media_encryption,
+        termination_uri: phoneData.termination_uri,
+        has_credentials: !!phoneData.credentials
+      });
+
+      // Подготавливаем тело запроса согласно документации
+      const requestBody = {
+        label: phoneData.label,
+        phone_number: phoneData.phone_number,
+        termination_uri: phoneData.termination_uri,
+        ...(phoneData.transport && { transport: phoneData.transport }),
+        ...(phoneData.media_encryption && { media_encryption: phoneData.media_encryption }),
+        ...(phoneData.credentials && { credentials: phoneData.credentials }),
+        ...(phoneData.headers && { headers: phoneData.headers })
+      };
+
+      console.log('Отправляем запрос к API Eleven Labs:', requestBody);
+
+      const response = await axios.post(
+        `${this.apiUrl}/v1/convai/phone-numbers/create`,
+        requestBody,
+        {
+          headers: this.getHeaders(),
+          timeout: 30000
+        }
+      );
+
+      console.log('=== SIP TRUNK НОМЕР УСПЕШНО СОЗДАН ===');
+      console.log('API Response:', response.data);
+
+      // Возвращаем phone_number_id из ответа API
+      return {
+        phone_number_id: response.data.phone_number_id,
+        phone_number: phoneData.phone_number,
+        label: phoneData.label,
+        status: 'active',
+        created_at: new Date().toISOString()
+      };
+
+    } catch (error: any) {
+      console.error('=== ОШИБКА СОЗДАНИЯ SIP TRUNK НОМЕРА ===');
+      console.error('Phone data:', phoneData);
+      console.error('Error details:', {
+        message: error.message,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data
+      });
+      
+      if (error.response?.status === 422) {
+        const validationErrors = error.response?.data?.detail || [];
+        const errorMessages = Array.isArray(validationErrors) 
+          ? validationErrors.map((err: any) => typeof err === 'object' ? JSON.stringify(err) : err).join('; ')
+          : validationErrors;
+        console.error('Детали ошибок валидации:', errorMessages);
+        throw new Error(`Ошибка валидации данных: ${errorMessages}`);
+      } else if (error.response?.status === 401) {
+        throw new Error('Ошибка авторизации: проверьте API ключ Eleven Labs');
+      } else if (error.response?.status >= 500) {
+        throw new Error('Ошибка сервера Eleven Labs, попробуйте позже');
+      }
+      
+      throw new Error(`Не удалось создать SIP trunk номер: ${error.response?.data?.detail?.message || error.message}`);
+    }
+  }
+
+  /**
+   * Создание Twilio номера телефона через API Eleven Labs
+   */
+  async createTwilioPhoneNumber(phoneData: CreateTwilioPhoneNumberRequest): Promise<CreateTwilioPhoneNumberResponse> {
+    try {
+      console.log('=== СОЗДАНИЕ TWILIO НОМЕРА В ELEVENLABS ===');
+      console.log('Phone data:', {
+        label: phoneData.label,
+        phone_number: phoneData.phone_number,
+        sid: phoneData.sid
+      });
+
+      // Подготавливаем тело запроса согласно документации
+      const requestBody = {
+        label: phoneData.label,
+        phone_number: phoneData.phone_number,
+        sid: phoneData.sid,
+        token: phoneData.token
+      };
+
+      console.log('Отправляем запрос к API Eleven Labs:', { ...requestBody, token: '[СКРЫТО]' });
+
+      const response = await axios.post(
+        `${this.apiUrl}/v1/convai/phone-numbers/create`,
+        requestBody,
+        {
+          headers: this.getHeaders(),
+          timeout: 30000
+        }
+      );
+
+      console.log('=== TWILIO НОМЕР УСПЕШНО СОЗДАН ===');
+      console.log('API Response:', response.data);
+
+      // Возвращаем phone_number_id из ответа API
+      return {
+        phone_number_id: response.data.phone_number_id,
+        phone_number: phoneData.phone_number,
+        label: phoneData.label,
+        status: 'active',
+        created_at: new Date().toISOString()
+      };
+
+    } catch (error: any) {
+      console.error('=== ОШИБКА СОЗДАНИЯ TWILIO НОМЕРА ===');
+      console.error('Phone data:', { ...phoneData, token: '[СКРЫТО]' });
+      console.error('Error details:', {
+        message: error.message,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data
+      });
+      
+      if (error.response?.status === 422) {
+        const validationErrors = error.response?.data?.detail || [];
+        const errorMessages = Array.isArray(validationErrors) 
+          ? validationErrors.map((err: any) => typeof err === 'object' ? JSON.stringify(err) : err).join('; ')
+          : validationErrors;
+        console.error('Детали ошибок валидации:', errorMessages);
+        throw new Error(`Ошибка валидации данных: ${errorMessages}`);
+      } else if (error.response?.status === 401) {
+        throw new Error('Ошибка авторизации: проверьте API ключ Eleven Labs');
+      } else if (error.response?.status >= 500) {
+        throw new Error('Ошибка сервера Eleven Labs, попробуйте позже');
+      }
+      
+      throw new Error(`Не удалось создать Twilio номер: ${error.response?.data?.detail?.message || error.message}`);
+    }
+  }
+
+  /**
+   * Получение списка номеров телефона
+   */
+  async getPhoneNumbers(): Promise<GetPhoneNumbersResponse> {
+    try {
+      console.log('=== ПОЛУЧЕНИЕ СПИСКА НОМЕРОВ ТЕЛЕФОНА В ELEVENLABS ===');
+      
+      const response = await axios.get(`${this.apiUrl}/convai/phone-numbers`, {
+        headers: this.getHeaders(),
+      });
+      
+             console.log('Успешно получен список номеров телефона:', {
+         total_phone_numbers: response.data.phone_numbers.length,
+         phone_numbers: response.data.phone_numbers.map((p: any) => ({
+           phone_number: p.phone_number,
+           label: p.label,
+           phone_number_id: p.phone_number_id,
+           provider: p.provider,
+           assigned_agent: p.assigned_agent ? {
+             agent_id: p.assigned_agent.agent_id,
+             agent_name: p.assigned_agent.agent_name
+           } : undefined
+         }))
+       });
+      
+      return response.data;
+    } catch (error: any) {
+      console.error('=== ОШИБКА ELEVENLABS API (СПИСОК НОМЕРОВ) ===');
+      console.error('Status:', error.response?.status);
+      console.error('Response data:', JSON.stringify(error.response?.data, null, 2));
+      
+      throw new Error(`Не удалось получить список номеров телефона: ${error.response?.data?.detail?.message || error.message}`);
     }
   }
 }

@@ -5,6 +5,13 @@ import { VoiceChatController } from './controllers/voiceChat.controller';
 import cors from 'cors';
 import dotenv from 'dotenv';
 
+// Импортируем роуты
+import authRoutes from './routes/authRoutes';
+import agentRoutes from './routes/agentRoutes';
+import managerRoutes from './routes/managerRoutes';
+import phoneRoutes from './routes/phoneRoutes';
+import voiceRoutes from './routes/voiceRoutes';
+
 dotenv.config();
 
 const app = express();
@@ -46,7 +53,12 @@ io.on('connection', (socket) => {
 
 // Базовый маршрут для проверки работы сервера
 app.get('/', (req, res) => {
-  res.send('Server is running');
+  res.json({
+    message: 'VCL Backend API',
+    version: '2.0.0',
+    database: 'SQLite with Prisma',
+    docs: '/api-docs'
+  });
 });
 
 // Инициализация контроллера для голосового чата
@@ -54,6 +66,13 @@ const voiceChatController = new VoiceChatController(io);
 
 // Routes
 app.get('/api/voice-chat/session', (req, res) => voiceChatController.getSessionInfo(req, res));
+
+// Подключаем роуты API
+app.use('/api/auth', authRoutes);
+app.use('/api/agents', agentRoutes);
+app.use('/api/managers', managerRoutes);
+app.use('/api/phone', phoneRoutes);
+app.use('/api/voice', voiceRoutes);
 
 // Добавляем обработчик для проверки статуса Socket.IO
 app.get('/socket.io-status', (req, res) => {

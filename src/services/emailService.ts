@@ -4,25 +4,38 @@ import { getManagerWelcomeEmailTemplate } from './emailTemplates';
 
 dotenv.config();
 
-if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
-  throw new Error('Email credentials are not properly configured in environment variables');
+// Проверяем наличие email конфигурации
+const isEmailConfigured = !!(process.env.EMAIL_USER && process.env.EMAIL_PASS && 
+                             process.env.EMAIL_USER !== 'your-email@gmail.com' &&
+                             process.env.EMAIL_PASS !== 'your-app-password');
+
+let transporter: nodemailer.Transporter | null = null;
+
+if (isEmailConfigured) {
+  transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false,
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
+    },
+    debug: false,
+    logger: false
+  });
+  console.log('📧 Email service initialized successfully');
+} else {
+  console.warn('⚠️  Email service not configured - email sending will be disabled');
 }
 
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASSWORD
-  },
-  debug: true,
-  logger: true
-});
-
 export const sendVerificationEmail = async (email: string, code: string) => {
+  if (!transporter) {
+    console.warn('Email service not configured - verification email not sent');
+    return;
+  }
+
   const mailOptions = {
-    from: process.env.EMAIL_FROM,
+    from: process.env.EMAIL_USER,
     to: email,
     subject: 'Подтверждение регистрации VCL',
     html: `
@@ -39,12 +52,22 @@ export const sendVerificationEmail = async (email: string, code: string) => {
     `,
   };
 
-  await transporter.sendMail(mailOptions);
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`✅ Verification email sent to ${email}`);
+  } catch (error) {
+    console.error('❌ Error sending verification email:', error);
+  }
 };
 
 export const sendResetPasswordEmail = async (email: string, code: string) => {
+  if (!transporter) {
+    console.warn('Email service not configured - reset password email not sent');
+    return;
+  }
+
   const mailOptions = {
-    from: process.env.EMAIL_FROM,
+    from: process.env.EMAIL_USER,
     to: email,
     subject: 'Сброс пароля VCL',
     html: `
@@ -61,7 +84,12 @@ export const sendResetPasswordEmail = async (email: string, code: string) => {
     `,
   };
 
-  await transporter.sendMail(mailOptions);
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`✅ Reset password email sent to ${email}`);
+  } catch (error) {
+    console.error('❌ Error sending reset password email:', error);
+  }
 };
 
 interface ManagerEmailData {
@@ -81,8 +109,13 @@ interface SupportTicketData {
 }
 
 export const sendManagerWelcomeEmail = async (data: ManagerEmailData) => {
+  if (!transporter) {
+    console.warn('Email service not configured - manager welcome email not sent');
+    return;
+  }
+
   const mailOptions = {
-    from: process.env.EMAIL_FROM,
+    from: process.env.EMAIL_USER,
     to: data.email,
     subject: 'Добро пожаловать в VCL - Ваши учетные данные',
     html: getManagerWelcomeEmailTemplate(
@@ -96,9 +129,9 @@ export const sendManagerWelcomeEmail = async (data: ManagerEmailData) => {
 
   try {
     await transporter.sendMail(mailOptions);
+    console.log(`✅ Manager welcome email sent to ${data.email}`);
   } catch (error) {
-    console.error('Error sending manager welcome email:', error);
-    // Не выбрасываем ошибку, так как это не критичная операция
+    console.error('❌ Error sending manager welcome email:', error);
   }
 };
 
@@ -138,10 +171,15 @@ export const sendEmail = async (options: EmailOptions): Promise<void> => {
  * Отправка обращения в службу поддержки
  */
 export const sendSupportEmail = async (data: SupportTicketData) => {
+  if (!transporter) {
+    console.warn('Email service not configured - support email not sent');
+    return;
+  }
+
   const supportEmail = process.env.EMAIL_USER; // Отправляем самому себе
   
   const mailOptions = {
-    from: process.env.EMAIL_FROM,
+    from: process.env.EMAIL_USER,
     to: supportEmail,
     subject: `[VCL Support] ${data.problemType}: ${data.subject}`,
     html: `
@@ -201,9 +239,8 @@ export const sendSupportEmail = async (data: SupportTicketData) => {
 
   try {
     await transporter.sendMail(mailOptions);
-    console.log('Support email sent successfully to:', supportEmail);
+    console.log(`✅ Support email sent for ${data.clientName}`);
   } catch (error) {
-    console.error('Error sending support email:', error);
-    throw new Error('Не удалось отправить обращение в службу поддержки');
+    console.error('❌ Error sending support email:', error);
   }
 }; 

@@ -1,48 +1,121 @@
 import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
-import { User } from '../models/User';
+import bcrypt from 'bcryptjs';
+import { prisma } from '../services/database';
 import { sendVerificationEmail, sendResetPasswordEmail } from '../services/emailService';
-
-interface CustomRequest extends Request {
-  user?: {
-    userId: string;
-  };
-}
+import { AuthenticatedRequest, JWTPayload } from '../types';
 
 const generateVerificationCode = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
+};
+
+const generateSlug = (name: string) => {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .trim();
 };
 
 export const register = async (req: Request, res: Response) => {
   try {
     const { email, firstName, lastName, companyName, password } = req.body;
 
+    console.log('=== НАЧАЛО РЕГИСТРАЦИИ ===');
+    console.log('Email:', email);
+    console.log('Company:', companyName);
+
     // Проверка существования пользователя
-    const existingUser = await User.findOne({ email });
+    const existingUser = await prisma.user.findUnique({
+      where: { email }
+    });
+    
     if (existingUser) {
+      console.log('Пользователь уже существует');
       return res.status(400).json({ message: 'Пользователь с таким email уже существует' });
+    }
+
+    // Проверка существования компании с таким именем
+    const existingCompany = await prisma.company.findFirst({
+      where: { name: companyName }
+    });
+    
+    if (existingCompany) {
+      console.log('Компания уже существует');
+      return res.status(400).json({ message: 'Компания с таким названием уже существует' });
     }
 
     // Создание кода верификации
     const verificationCode = generateVerificationCode();
+    const slug = generateSlug(companyName);
 
-    // Создание нового пользователя
-    const user = new User({
-      email,
-      firstName,
-      lastName,
-      companyName,
-      password,
-      verificationCode
+    console.log('Верификационный код:', verificationCode);
+    console.log('Slug:', slug);
+
+    // Хешируем пароль
+    const hashedPassword = await bcrypt.hash(password, 10);
+    console.log('Пароль хеширован успешно');
+
+    // Создаем компанию и пользователя в транзакции
+    console.log('Начинаем транзакцию...');
+    const result = await prisma.$transaction(async (tx) => {
+      console.log('Создаем компанию...');
+      // Сначала создаем компанию без createdBy
+      const company = await tx.company.create({
+        data: {
+          name: companyName,
+          slug,
+          timezone: 'UTC',
+          currency: 'USD',
+          language: 'ru'
+        }
+      });
+
+      console.log('Компания создана:', company.id);
+
+      console.log('Создаем пользователя...');
+      // Создаем пользователя с правильным companyId
+      const user = await tx.user.create({
+        data: {
+          email,
+          firstName,
+          lastName,
+          companyName,
+          password: hashedPassword,
+          verificationCode,
+          companyId: company.id
+        }
+      });
+
+      console.log('Пользователь создан:', user.id);
+
+      console.log('Обновляем компанию...');
+      // Обновляем компанию с правильным createdBy
+      const updatedCompany = await tx.company.update({
+        where: { id: company.id },
+        data: { createdBy: user.id }
+      });
+
+      console.log('Компания обновлена');
+
+      return { user, company: updatedCompany };
     });
 
-    await user.save();
+    console.log('=== РЕГИСТРАЦИЯ УСПЕШНА ===');
+    console.log('Пользователь:', email);
+    console.log('Компания:', companyName);
+    console.log('Company ID:', result.company.id);
 
     res.status(200).json({ 
       message: 'Регистрация успешна',
-      email: email
+      email: email,
+      company: companyName
     });
   } catch (error) {
+    console.error('=== ОШИБКА РЕГИСТРАЦИИ ===');
+    console.error('Ошибка при регистрации:', error);
+    console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
     res.status(500).json({ message: 'Ошибка при регистрации' });
   }
 };
@@ -55,7 +128,10 @@ export const sendCode = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Неверный режим отправки кода' });
     }
 
-    const user = await User.findOne({ email });
+    const user = await prisma.user.findUnique({
+      where: { email }
+    });
+    
     if (!user) {
       return res.status(404).json({ message: 'Пользователь не найден' });
     }
@@ -66,13 +142,12 @@ export const sendCode = async (req: Request, res: Response) => {
 
     const code = generateVerificationCode();
 
-    if (mode === 'register') {
-      user.verificationCode = code;
-    } else {
-      user.resetPasswordCode = code;
-    }
-
-    await user.save();
+    await prisma.user.update({
+      where: { email },
+      data: {
+        [mode === 'register' ? 'verificationCode' : 'resetPasswordCode']: code
+      }
+    });
 
     try {
       if (mode === 'register') {
@@ -105,23 +180,27 @@ export const verifyEmail = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Неверный режим верификации' });
     }
 
-    const user = await User.findOne({ 
-      email,
-      [mode === 'register' ? 'verificationCode' : 'resetPasswordCode']: code 
+    const user = await prisma.user.findUnique({
+      where: { email }
     });
 
     if (!user) {
+      return res.status(400).json({ message: 'Пользователь не найден' });
+    }
+
+    const storedCode = mode === 'register' ? user.verificationCode : user.resetPasswordCode;
+    if (!storedCode || storedCode !== code) {
       return res.status(400).json({ message: 'Неверный код' });
     }
 
-    if (mode === 'register') {
-      user.isVerified = true;
-      user.verificationCode = undefined;
-    } else {
-      user.resetPasswordCode = undefined;
-    }
-
-    await user.save();
+    await prisma.user.update({
+      where: { email },
+      data: {
+        isVerified: mode === 'register' ? true : user.isVerified,
+        verificationCode: mode === 'register' ? null : user.verificationCode,
+        resetPasswordCode: mode === 'reset' ? null : user.resetPasswordCode
+      }
+    });
 
     res.json({ message: mode === 'register' ? 'Email успешно подтвержден' : 'Код подтвержден' });
   } catch (error) {
@@ -133,28 +212,64 @@ export const login = async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email });
-    if (!user) {
+    // Сначала проверяем пользователей (User)
+    const user = await prisma.user.findUnique({
+      where: { email }
+    });
+    
+    if (user) {
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) {
+        return res.status(401).json({ message: 'Неверный email или пароль' });
+      }
+
+      if (!user.isVerified) {
+        return res.status(401).json({ message: 'Email не подтвержден' });
+      }
+
+      const token = jwt.sign(
+        { userId: user.id, userType: 'user' },
+        process.env.JWT_SECRET!,
+        { expiresIn: '24h' }
+      );
+
+      console.log('=== УСПЕШНЫЙ ЛОГИН ПОЛЬЗОВАТЕЛЯ ===');
+      console.log('User ID:', user.id);
+      console.log('Email:', user.email);
+      console.log('Role:', user.role);
+
+      return res.json({ token });
+    }
+
+    // Если пользователь не найден, проверяем менеджеров (Manager)
+    const manager = await prisma.manager.findUnique({
+      where: { email }
+    });
+    
+    if (!manager) {
       return res.status(401).json({ message: 'Неверный email или пароль' });
     }
 
-    const isMatch = await user.comparePassword(password);
+    const isMatch = await bcrypt.compare(password, manager.password);
     if (!isMatch) {
       return res.status(401).json({ message: 'Неверный email или пароль' });
     }
 
-    if (!user.isVerified) {
-      return res.status(401).json({ message: 'Email не подтвержден' });
-    }
-
     const token = jwt.sign(
-      { userId: user._id },
+      { userId: manager.id, userType: 'manager' },
       process.env.JWT_SECRET!,
       { expiresIn: '24h' }
     );
 
+    console.log('=== УСПЕШНЫЙ ЛОГИН МЕНЕДЖЕРА ===');
+    console.log('Manager ID:', manager.id);
+    console.log('Email:', manager.email);
+    console.log('Role:', manager.role);
+    console.log('Company ID:', manager.companyId);
+
     res.json({ token });
   } catch (error) {
+    console.error('Ошибка при входе:', error);
     res.status(500).json({ message: 'Ошибка при входе' });
   }
 };
@@ -163,7 +278,10 @@ export const resetPassword = async (req: Request, res: Response) => {
   try {
     const { email, newPassword } = req.body;
 
-    const user = await User.findOne({ email });
+    const user = await prisma.user.findUnique({
+      where: { email }
+    });
+    
     if (!user) {
       return res.status(404).json({ message: 'Пользователь не найден' });
     }
@@ -172,8 +290,12 @@ export const resetPassword = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Сначала подтвердите код сброса пароля' });
     }
 
-    user.password = newPassword;
-    await user.save();
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await prisma.user.update({
+      where: { email },
+      data: { password: hashedPassword }
+    });
 
     res.json({ message: 'Пароль успешно изменен' });
   } catch (error) {
@@ -181,26 +303,106 @@ export const resetPassword = async (req: Request, res: Response) => {
   }
 };
 
-export const getMe = async (req: CustomRequest, res: Response) => {
+export const getMe = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    if (!req.user?.userId) {
+    if (!req.user?.id) {
       return res.status(401).json({ message: 'Не авторизован' });
     }
 
-    const user = await User.findById(req.user.userId).select('-password -verificationCode -resetPasswordCode');
-    if (!user) {
-      return res.status(404).json({ message: 'Пользователь не найден' });
+    // Получаем токен и декодируем его для определения типа пользователя
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ message: 'Не авторизован' });
     }
 
-    res.json(user);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as JWTPayload;
+    const userType = decoded.userType || 'user';
+
+    if (userType === 'user') {
+      // Ищем в таблице User
+      const user = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          companyName: true,
+          role: true,
+          isVerified: true,
+          createdAt: true,
+          updatedAt: true,
+          company: {
+            select: {
+              id: true,
+              name: true,
+              slug: true
+            }
+          }
+        }
+      });
+      
+      if (!user) {
+        return res.status(404).json({ message: 'Пользователь не найден' });
+      }
+
+      console.log('=== ПОЛУЧЕН ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ ===');
+      console.log('User ID:', user.id);
+      console.log('Email:', user.email);
+      console.log('Role:', user.role);
+
+      res.json(user);
+    } else if (userType === 'manager') {
+      // Ищем в таблице Manager
+      const manager = await prisma.manager.findUnique({
+        where: { id: req.user.id },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          companyName: true,
+          role: true,
+          companyId: true,
+          createdAt: true,
+          updatedAt: true,
+          company: {
+            select: {
+              id: true,
+              name: true,
+              slug: true
+            }
+          }
+        }
+      });
+      
+      if (!manager) {
+        return res.status(404).json({ message: 'Менеджер не найден' });
+      }
+
+      console.log('=== ПОЛУЧЕН ПРОФИЛЬ МЕНЕДЖЕРА ===');
+      console.log('Manager ID:', manager.id);
+      console.log('Email:', manager.email);
+      console.log('Role:', manager.role);
+      console.log('Company ID:', manager.companyId);
+
+      // Возвращаем данные в том же формате, что и для пользователей
+      res.json({
+        ...manager,
+        isVerified: true // Менеджеры всегда считаются "подтвержденными"
+      });
+    } else {
+      return res.status(401).json({ message: 'Недопустимый тип пользователя' });
+    }
   } catch (error) {
+    console.error('Ошибка при получении данных пользователя:', error);
     res.status(500).json({ message: 'Ошибка при получении данных пользователя' });
   }
 };
 
-export const updateProfile = async (req: CustomRequest, res: Response) => {
+export const updateProfile = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    if (!req.user?.userId) {
+    if (!req.user?.id) {
       return res.status(401).json({ message: 'Не авторизован' });
     }
 
@@ -214,26 +416,31 @@ export const updateProfile = async (req: CustomRequest, res: Response) => {
       });
     }
 
-    const user = await User.findById(req.user.userId);
-    if (!user) {
-      return res.status(404).json({ message: 'Пользователь не найден' });
-    }
-
     console.log('=== ОБНОВЛЕНИЕ ПРОФИЛЯ ПОЛЬЗОВАТЕЛЯ ===');
-    console.log('User ID:', req.user.userId);
+    console.log('User ID:', req.user.id);
     console.log('Updates:', { firstName, lastName, companyName });
 
-    // Обновляем только переданные поля
-    if (firstName !== undefined) user.firstName = firstName;
-    if (lastName !== undefined) user.lastName = lastName; 
-    if (companyName !== undefined) user.companyName = companyName;
-
-    await user.save();
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        ...(firstName && { firstName }),
+        ...(lastName && { lastName }),
+        ...(companyName && { companyName })
+      },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        companyName: true,
+        role: true,
+        isVerified: true,
+        createdAt: true,
+        updatedAt: true
+      }
+    });
 
     console.log('Профиль успешно обновлен');
-
-    // Возвращаем обновленные данные без пароля и служебных полей
-    const updatedUser = await User.findById(req.user.userId).select('-password -verificationCode -resetPasswordCode');
 
     res.json({
       message: 'Профиль успешно обновлен',
@@ -246,9 +453,9 @@ export const updateProfile = async (req: CustomRequest, res: Response) => {
   }
 };
 
-export const changePassword = async (req: CustomRequest, res: Response) => {
+export const changePassword = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    if (!req.user?.userId) {
+    if (!req.user?.id) {
       return res.status(401).json({ message: 'Не авторизован' });
     }
 
@@ -264,40 +471,41 @@ export const changePassword = async (req: CustomRequest, res: Response) => {
 
     // Валидация длины нового пароля
     if (newPassword.length < 6) {
-      return res.status(400).json({ message: 'Новый пароль должен содержать минимум 6 символов' });
+      return res.status(400).json({ 
+        message: 'Новый пароль должен содержать минимум 6 символов' 
+      });
     }
 
-    const user = await User.findById(req.user.userId);
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id }
+    });
+    
     if (!user) {
       return res.status(404).json({ message: 'Пользователь не найден' });
     }
 
-    console.log('=== СМЕНА ПАРОЛЯ ПОЛЬЗОВАТЕЛЯ ===');
-    console.log('User ID:', req.user.userId);
-    console.log('Email:', user.email);
+    console.log('=== СМЕНА ПАРОЛЯ ===');
+    console.log('User ID:', req.user.id);
 
-    // Проверяем текущий пароль
-    const isCurrentPasswordValid = await user.comparePassword(currentPassword);
+    // Проверка текущего пароля
+    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password);
     if (!isCurrentPasswordValid) {
+      console.log('Неверный текущий пароль');
       return res.status(400).json({ message: 'Неверный текущий пароль' });
     }
 
-    // Проверяем что новый пароль отличается от текущего
-    const isSamePassword = await user.comparePassword(newPassword);
-    if (isSamePassword) {
-      return res.status(400).json({ message: 'Новый пароль должен отличаться от текущего' });
-    }
+    // Хешируем новый пароль
+    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
 
-    // Устанавливаем новый пароль (хеширование произойдет автоматически в pre('save') hook)
-    user.password = newPassword;
-    await user.save();
+    // Устанавливаем новый пароль
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: { password: hashedNewPassword }
+    });
 
     console.log('Пароль успешно изменен');
 
-    res.json({
-      message: 'Пароль успешно изменен',
-      changed_at: new Date()
-    });
+    res.json({ message: 'Пароль успешно изменен' });
   } catch (error) {
     console.error('=== ОШИБКА СМЕНЫ ПАРОЛЯ ===');
     console.error('Error changing password:', error);

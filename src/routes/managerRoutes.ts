@@ -8,6 +8,7 @@ import {
 } from '../controllers/managerController';
 import { authMiddleware } from '../middleware/authMiddleware';
 import { adminMiddleware } from '../middleware/adminMiddleware';
+import { tenantMiddleware, checkCompanyLimits } from '../middleware/tenantMiddleware';
 
 const router = express.Router();
 
@@ -113,7 +114,7 @@ const router = express.Router();
  *       500:
  *         description: Внутренняя ошибка сервера
  */
-router.post('/', [authMiddleware, adminMiddleware], createManager);
+router.post('/', [authMiddleware, adminMiddleware, tenantMiddleware, checkCompanyLimits('managers')], createManager as any);
 
 /**
  * @swagger
@@ -134,7 +135,7 @@ router.post('/', [authMiddleware, adminMiddleware], createManager);
  *       500:
  *         description: Внутренняя ошибка сервера
  */
-router.get('/', [authMiddleware, adminMiddleware], getManagers);
+router.get('/', [authMiddleware, adminMiddleware, tenantMiddleware], getManagers as any);
 
 /**
  * @swagger
