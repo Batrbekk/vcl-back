@@ -40,3 +40,6 @@ temp/
 .npm/
 .eslintcache 
 /generated/prisma
+
+# WhatsApp сессии
+.whatsapp-sessions/

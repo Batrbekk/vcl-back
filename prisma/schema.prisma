@@ -45,6 +45,10 @@ model Company {
   elevenLabsAgents ElevenLabsAgent[]
   phoneNumbers     PhoneNumber[]
   knowledgeBases   CompanyKnowledgeBase[]
+  whatsappSessions WhatsAppSession[]
+  whatsappManagerAccess WhatsAppManagerAccess[]
+  whatsappChats    WhatsAppChat[]
+  whatsappMessages WhatsAppMessage[]
 
   @@index([slug])
   @@index([name])
@@ -75,6 +79,8 @@ model User {
   agentsCreated           Agent[]
   elevenLabsAgentsCreated ElevenLabsAgent[]
   knowledgeBasesCreated   CompanyKnowledgeBase[] @relation("KnowledgeBaseCreator")
+  whatsappSessionsCreated WhatsAppSession[]      @relation("WhatsAppSessionCreator")
+  whatsappAccessGranted   WhatsAppManagerAccess[] @relation("WhatsAppAccessGranter")
 
   @@index([companyId])
   @@index([email, companyId])
@@ -97,6 +103,8 @@ model Manager {
   // Relations
   admin   User    @relation(fields: [adminId], references: [id], onDelete: Cascade)
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  whatsappAccess WhatsAppManagerAccess[]
+  whatsappMessages WhatsAppMessage[]
 
   @@index([companyId])
   @@index([email, companyId])
@@ -219,4 +227,111 @@ model CompanyKnowledgeBase {
   @@index([companyId])
   @@index([elevenLabsDocumentId])
   @@index([createdBy])
+}
+
+model WhatsAppSession {
+  id          String   @id @default(cuid())
+  companyId   String
+  phoneNumber String   // Номер телефона WhatsApp аккаунта
+  displayName String?  // Имя аккаунта в WhatsApp
+  isActive    Boolean  @default(false)
+  isConnected Boolean  @default(false)
+  qrCode      String?  // QR код для авторизации
+  sessionData String?  // Зашифрованные данные сессии
+  lastSeen    DateTime?
+  adminId     String   // Администратор, который подключил
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  company        Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  admin          User                   @relation("WhatsAppSessionCreator", fields: [adminId], references: [id], onDelete: Cascade)
+  chats          WhatsAppChat[]
+  managerAccess  WhatsAppManagerAccess[]
+  messages       WhatsAppMessage[]
+
+  @@unique([companyId, phoneNumber])
+  @@index([companyId])
+  @@index([adminId])
+  @@index([isActive])
+}
+
+model WhatsAppManagerAccess {
+  id              String   @id @default(cuid())
+  sessionId       String
+  managerId       String
+  companyId       String
+  canRead         Boolean  @default(true)
+  canWrite        Boolean  @default(true)
+  canManageChats  Boolean  @default(false)
+  grantedAt       DateTime @default(now())
+  grantedBy       String   // ID администратора, который предоставил доступ
+
+  // Relations
+  session   WhatsAppSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  manager   Manager         @relation(fields: [managerId], references: [id], onDelete: Cascade)
+  company   Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  grantedByUser User        @relation("WhatsAppAccessGranter", fields: [grantedBy], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, managerId])
+  @@index([sessionId])
+  @@index([managerId])
+  @@index([companyId])
+}
+
+model WhatsAppChat {
+  id              String   @id @default(cuid())
+  sessionId       String
+  companyId       String
+  chatId          String   // ID чата в WhatsApp (номер телефона или группа)
+  chatName        String?  // Имя контакта или группы
+  chatType        String   @default("individual") // individual, group
+  isGroup         Boolean  @default(false)
+  lastMessageAt   DateTime?
+  lastMessageText String?
+  isArchived      Boolean  @default(false)
+  unreadCount     Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  session  WhatsAppSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  company  Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  messages WhatsAppMessage[]
+
+  @@unique([sessionId, chatId])
+  @@index([sessionId])
+  @@index([companyId])
+  @@index([lastMessageAt])
+}
+
+model WhatsAppMessage {
+  id           String   @id @default(cuid())
+  chatId       String
+  sessionId    String
+  companyId    String
+  messageId    String   // ID сообщения в WhatsApp
+  fromMe       Boolean  // true если сообщение от нас, false если от клиента
+  fromNumber   String   // Номер отправителя
+  fromName     String?  // Имя отправителя
+  body         String?  // Текст сообщения
+  messageType  String   @default("text") // text, image, document, audio, etc.
+  mediaUrl     String?  // URL медиафайла если есть
+  timestamp    DateTime // Время отправки в WhatsApp
+  isRead       Boolean  @default(false)
+  managerId    String?  // ID менеджера, который обработал сообщение
+  createdAt    DateTime @default(now())
+
+  // Relations
+  chat     WhatsAppChat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  session  WhatsAppSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  company  Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  manager  Manager?         @relation(fields: [managerId], references: [id], onDelete: SetNull)
+
+  @@unique([sessionId, messageId])
+  @@index([chatId])
+  @@index([sessionId])
+  @@index([companyId])
+  @@index([timestamp])
+  @@index([fromMe])
 }
