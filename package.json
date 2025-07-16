@@ -8,6 +8,7 @@
     "dev": "nodemon index.ts",
     "build": "tsc",
     "vercel-build": "prisma migrate deploy && prisma generate && tsc",
+    "vercel-build-with-migrate": "prisma migrate deploy && prisma generate && tsc",
     "postinstall": "prisma generate",
     "migration": "npx ts-node src/scripts/migration.ts",
     "db:migrate": "prisma migrate deploy",
