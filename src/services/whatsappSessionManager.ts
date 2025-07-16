@@ -126,7 +126,8 @@ export class WhatsAppSessionManager {
           }
         });
       } else {
-        // Создаем новую запись в базе данных
+        // Создаем новую запись в базу данных
+        console.log(`[WhatsApp] Создаем новую запись в БД для компании ${companyId}`);
         sessionRecord = await prisma.whatsAppSession.create({
           data: {
             companyId,
@@ -136,10 +137,13 @@ export class WhatsAppSessionManager {
             isConnected: false
           }
         });
+        console.log(`[WhatsApp] Запись создана с ID: ${sessionRecord.id}`);
       }
 
       // Создаем клиент WhatsApp
       const sessionPath = path.join(this.sessionsDir, `session_${sessionRecord.id}`);
+      console.log(`[WhatsApp] Создаем WhatsApp клиент для сессии ${sessionRecord.id}, путь: ${sessionPath}`);
+      
       const client = new Client({
         authStrategy: new LocalAuth({
           clientId: sessionRecord.id,
@@ -167,11 +171,17 @@ export class WhatsAppSessionManager {
         client,
         isConnected: false
       });
+      console.log(`[WhatsApp] Сессия ${sessionRecord.id} добавлена в локальный кэш`);
 
       // Настраиваем обработчики событий
       this.setupClientEventHandlers(sessionRecord.id, client);
 
+      // Небольшая задержка перед инициализацией для гарантии фиксации записи в БД
+      console.log(`[WhatsApp] Ожидание 500мс для фиксации записи в БД...`);
+      await new Promise(resolve => setTimeout(resolve, 500));
+
       // Инициализируем клиент
+      console.log(`[WhatsApp] Инициализируем WhatsApp клиент для сессии ${sessionRecord.id}`);
       await client.initialize();
 
       console.log(`[WhatsApp] Сессия ${sessionRecord.id} создана и инициализирована`);
@@ -181,6 +191,69 @@ export class WhatsAppSessionManager {
       console.error('[WhatsApp] Ошибка создания сессии:', error);
       throw error;
     }
+  }
+
+  /**
+   * Утилита для повторных попыток операций с базой данных
+   */
+  private async retryOperation<T>(
+    operation: () => Promise<T>,
+    operationName: string,
+    maxRetries: number = 3,
+    baseDelay: number = 1000
+  ): Promise<T> {
+    let lastError: any;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (error: any) {
+        lastError = error;
+        console.warn(`[WhatsApp] ${operationName} - попытка ${attempt}/${maxRetries} неуспешна:`, error.message);
+        
+        if (attempt === maxRetries) {
+          break;
+        }
+        
+        // Экспоненциальная задержка
+        const delay = baseDelay * Math.pow(2, attempt - 1);
+        console.log(`[WhatsApp] Ожидание ${delay}мс перед повторной попыткой...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    
+    throw lastError;
+  }
+
+  /**
+   * Безопасное обновление QR кода с проверками и повторными попытками
+   */
+  private async updateQRCodeSafely(sessionId: string, qrCodeImage: string): Promise<void> {
+    return this.retryOperation(async () => {
+      // Сначала проверяем, что сессия существует
+      const existingSession = await prisma.whatsAppSession.findUnique({
+        where: { id: sessionId },
+        select: { id: true, companyId: true }
+      });
+      
+      if (!existingSession) {
+        throw new Error(`Сессия ${sessionId} не найдена в базе данных`);
+      }
+      
+      console.log(`[WhatsApp] Обновляем QR код для сессии ${sessionId} (длина: ${qrCodeImage.length})`);
+      
+             // Обновляем QR код
+       await prisma.whatsAppSession.update({
+         where: { id: sessionId },
+         data: { 
+           qrCode: qrCodeImage,
+           updatedAt: new Date()
+         }
+       });
+       
+       console.log(`[WhatsApp] QR код успешно обновлен для сессии ${sessionId}`);
+      
+    }, `updateQRCode для сессии ${sessionId}`);
   }
 
   /**
@@ -195,11 +268,8 @@ export class WhatsAppSessionManager {
         // Генерируем QR код как base64 изображение
         const qrCodeImage = await QRCode.toDataURL(qr);
         
-        // Сохраняем QR код в базу данных
-        await prisma.whatsAppSession.update({
-          where: { id: sessionId },
-          data: { qrCode: qrCodeImage }
-        });
+        // Безопасно сохраняем QR код в базу данных с повторными попытками
+        await this.updateQRCodeSafely(sessionId, qrCodeImage);
 
         // Отправляем QR код через WebSocket (старый способ для совместимости)
         this.io.of('/whatsapp').to(`session:${sessionId}`).emit('whatsapp:qr', {
@@ -218,6 +288,14 @@ export class WhatsAppSessionManager {
 
       } catch (error) {
         console.error(`[WhatsApp] Ошибка обработки QR кода для сессии ${sessionId}:`, error);
+        
+        // Уведомляем о ошибке через WebSocket
+        if (this.webSocketController) {
+          this.webSocketController.notifySessionStatus(sessionId, {
+            status: 'error',
+            error: 'Не удалось сохранить QR код'
+          });
+        }
       }
     });
 
@@ -275,47 +353,59 @@ export class WhatsAppSessionManager {
           }
         }
 
-        // Обновляем сессию в базе данных
-        try {
-          await prisma.whatsAppSession.update({
+        // Безопасно обновляем сессию в базе данных
+        await this.retryOperation(async () => {
+          // Проверяем, что сессия все еще существует
+          const sessionExists = await prisma.whatsAppSession.findUnique({
             where: { id: sessionId },
-            data: {
-              isConnected: true,
-              phoneNumber,
-              displayName,
-              qrCode: null, // Очищаем QR код после успешной авторизации
-              lastSeen: new Date()
-            }
+            select: { id: true, companyId: true }
           });
-        } catch (error: any) {
-          // Дополнительная обработка на случай если ошибка всё-таки возникла
-          if (error.code === 'P2002' && error.meta?.target?.includes('phoneNumber')) {
-            console.error(`[WhatsApp] Конфликт уникального ключа при обновлении сессии ${sessionId}. Повторная попытка после очистки...`);
-            
-            // Ещё раз пытаемся очистить конфликтующие сессии
-            await prisma.whatsAppSession.deleteMany({
-              where: {
-                companyId: currentSession.companyId,
-                phoneNumber,
-                id: { not: sessionId }
-              }
-            });
-            
-            // Повторная попытка обновления
+          
+          if (!sessionExists) {
+            throw new Error(`Сессия ${sessionId} не найдена при обновлении после авторизации`);
+          }
+          
+          try {
             await prisma.whatsAppSession.update({
               where: { id: sessionId },
               data: {
                 isConnected: true,
                 phoneNumber,
                 displayName,
-                qrCode: null,
+                qrCode: null, // Очищаем QR код после успешной авторизации
                 lastSeen: new Date()
               }
             });
-          } else {
-            throw error; // Перебрасываем другие ошибки
+          } catch (error: any) {
+            // Дополнительная обработка на случай если ошибка всё-таки возникла
+            if (error.code === 'P2002' && error.meta?.target?.includes('phoneNumber')) {
+              console.error(`[WhatsApp] Конфликт уникального ключа при обновлении сессии ${sessionId}. Повторная попытка после очистки...`);
+              
+              // Ещё раз пытаемся очистить конфликтующие сессии
+              await prisma.whatsAppSession.deleteMany({
+                where: {
+                  companyId: currentSession.companyId,
+                  phoneNumber,
+                  id: { not: sessionId }
+                }
+              });
+              
+              // Повторная попытка обновления
+              await prisma.whatsAppSession.update({
+                where: { id: sessionId },
+                data: {
+                  isConnected: true,
+                  phoneNumber,
+                  displayName,
+                  qrCode: null,
+                  lastSeen: new Date()
+                }
+              });
+            } else {
+              throw error; // Перебрасываем другие ошибки
+            }
           }
-        }
+        }, `updateSessionAfterAuth для сессии ${sessionId}`);
 
         // Обновляем локальные данные
         sessionData.isConnected = true;
@@ -366,14 +456,26 @@ export class WhatsAppSessionManager {
           sessionData.isConnected = false;
         }
 
-        // Обновляем базу данных
-        await prisma.whatsAppSession.update({
-          where: { id: sessionId },
-          data: {
-            isConnected: false,
-            lastSeen: new Date()
+        // Безопасно обновляем базу данных
+        await this.retryOperation(async () => {
+          const sessionExists = await prisma.whatsAppSession.findUnique({
+            where: { id: sessionId },
+            select: { id: true }
+          });
+          
+          if (!sessionExists) {
+            console.warn(`[WhatsApp] Сессия ${sessionId} не найдена при отключении, пропускаем обновление`);
+            return;
           }
-        });
+          
+          await prisma.whatsAppSession.update({
+            where: { id: sessionId },
+            data: {
+              isConnected: false,
+              lastSeen: new Date()
+            }
+          });
+        }, `updateSessionDisconnected для сессии ${sessionId}`);
 
         // Уведомляем клиентов (старый способ для совместимости)
         this.io.of('/whatsapp').to(`session:${sessionId}`).emit('whatsapp:disconnected', {
