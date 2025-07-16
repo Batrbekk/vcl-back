@@ -63,7 +63,7 @@ app.get('/', (req, res) => {
   res.json({ 
     message: 'VCL Backend API',
     version: '2.0.0',
-    database: 'SQLite with Prisma',
+    database: 'PostgreSQL with Prisma',
     docs: '/api-docs'
   });
 });
@@ -91,5 +91,5 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server is running on port ${PORT}`);
   console.log(`📖 Swagger UI available at http://localhost:${PORT}/api-docs`);
-  console.log(`🗄️  Database: SQLite with Prisma`);
+  console.log(`🗄️  Database: PostgreSQL with Prisma (Neon)`);
 });

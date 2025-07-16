@@ -56,7 +56,7 @@ app.get('/', (req, res) => {
   res.json({
     message: 'VCL Backend API',
     version: '2.0.0',
-    database: 'SQLite with Prisma',
+    database: 'PostgreSQL with Prisma',
     docs: '/api-docs'
   });
 });

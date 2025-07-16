@@ -1,5 +1,5 @@
 # Database
-DATABASE_URL="file:./dev.db"
+DATABASE_URL="postgres://neondb_owner:npg_yqDhJCLb85iT@ep-bitter-scene-a2kxiq31-pooler.eu-central-1.aws.neon.tech/neondb?sslmode=require"
 
 GEMINI="AIzaSyDbHQIZuBVAu_v3jiZaMFofz1yKw9AVGVg"
 GOOGLE_CLIENT_ID="501832280197-jdnn7qvb5uiu4tdl7j1s1k3rg11h07j1.apps.googleusercontent.com"
