@@ -7,7 +7,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -18,34 +18,34 @@ model Company {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   isActive  Boolean  @default(true)
-  
+
   // Settings
   timezone String @default("UTC")
   currency String @default("USD")
   language String @default("ru")
-  
+
   // Subscription
-  subscriptionPlan      String   @default("basic") // basic, pro, enterprise
-  subscriptionStatus    String   @default("active") // active, suspended, cancelled, expired
+  subscriptionPlan      String    @default("basic") // basic, pro, enterprise
+  subscriptionStatus    String    @default("active") // active, suspended, cancelled, expired
   subscriptionExpiresAt DateTime?
-  
+
   // Limits
-  maxAgents         Int @default(10)
-  maxPhoneNumbers   Int @default(5)
-  maxManagers       Int @default(3)
-  maxMonthlyCalls   Int @default(1000)
-  
+  maxAgents       Int @default(10)
+  maxPhoneNumbers Int @default(5)
+  maxManagers     Int @default(3)
+  maxMonthlyCalls Int @default(1000)
+
   // Relations
-  createdBy   String?
-  createdByUser User? @relation("CompanyCreator", fields: [createdBy], references: [id], onDelete: Cascade)
-  
-  users            User[] @relation("CompanyUsers")
+  createdBy     String?
+  createdByUser User?   @relation("CompanyCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+
+  users            User[]                 @relation("CompanyUsers")
   managers         Manager[]
   agents           Agent[]
   elevenLabsAgents ElevenLabsAgent[]
   phoneNumbers     PhoneNumber[]
   knowledgeBases   CompanyKnowledgeBase[]
-  
+
   @@index([slug])
   @@index([name])
   @@index([createdBy])
@@ -53,29 +53,29 @@ model Company {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  firstName String
-  lastName  String
-  companyName String
-  companyId   String
-  password    String
-  isVerified  Boolean  @default(false)
-  isActive    Boolean  @default(true)
-  verificationCode    String?
-  resetPasswordCode   String?
-  role        String   @default("admin") // admin
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
+  id                String   @id @default(cuid())
+  email             String   @unique
+  firstName         String
+  lastName          String
+  companyName       String
+  companyId         String
+  password          String
+  isVerified        Boolean  @default(false)
+  isActive          Boolean  @default(true)
+  verificationCode  String?
+  resetPasswordCode String?
+  role              String   @default("admin") // admin
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
   // Relations
-  company     Company   @relation("CompanyUsers", fields: [companyId], references: [id], onDelete: Cascade)
-  companiesCreated Company[] @relation("CompanyCreator")
-  managersCreated  Manager[]
-  agentsCreated    Agent[]
+  company                 Company                @relation("CompanyUsers", fields: [companyId], references: [id], onDelete: Cascade)
+  companiesCreated        Company[]              @relation("CompanyCreator")
+  managersCreated         Manager[]
+  agentsCreated           Agent[]
   elevenLabsAgentsCreated ElevenLabsAgent[]
-  knowledgeBasesCreated CompanyKnowledgeBase[] @relation("KnowledgeBaseCreator")
-  
+  knowledgeBasesCreated   CompanyKnowledgeBase[] @relation("KnowledgeBaseCreator")
+
   @@index([companyId])
   @@index([email, companyId])
   @@index([isVerified])
@@ -93,128 +93,128 @@ model Manager {
   companyId   String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  
+
   // Relations
   admin   User    @relation(fields: [adminId], references: [id], onDelete: Cascade)
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  
+
   @@index([companyId])
   @@index([email, companyId])
   @@index([adminId, companyId])
 }
 
 model Agent {
-  id          String   @id @default(cuid())
-  name        String
-  description String
-  voiceId     String
-  language    String
-  gender      String   // male, female
-  greetingTemplate String
-  fallbackTemplate String
-  summaryTemplate  String
-  phoneNumber      String?
-  isActive         Boolean @default(true)
-  integratedWithAi Boolean @default(true)
-  aiModel          String
-  aiContextPrompt  String
+  id                String  @id @default(cuid())
+  name              String
+  description       String
+  voiceId           String
+  language          String
+  gender            String // male, female
+  greetingTemplate  String
+  fallbackTemplate  String
+  summaryTemplate   String
+  phoneNumber       String?
+  isActive          Boolean @default(true)
+  integratedWithAi  Boolean @default(true)
+  aiModel           String
+  aiContextPrompt   String
   elevenLabsAgentId String?
-  
+
   // Voice settings
-  voiceStability      Float   @default(0.5)
-  voiceSimilarityBoost Float  @default(0.5)
-  voiceStyle          Float   @default(0.5)
+  voiceStability       Float   @default(0.5)
+  voiceSimilarityBoost Float   @default(0.5)
+  voiceStyle           Float   @default(0.5)
   voiceUseSpeakerBoost Boolean @default(true)
-  voiceSpeed          Float   @default(1.0)
-  
+  voiceSpeed           Float   @default(1.0)
+
   // Allowed hours
-  allowedHoursStart String   // HH:MM format
-  allowedHoursEnd   String   // HH:MM format
+  allowedHoursStart    String // HH:MM format
+  allowedHoursEnd      String // HH:MM format
   allowedHoursTimezone String
-  
+
   // Relations
   adminId   String
   companyId String
   admin     User    @relation(fields: [adminId], references: [id], onDelete: Cascade)
   company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   @@index([companyId])
   @@index([adminId, companyId])
   @@index([isActive])
 }
 
 model ElevenLabsAgent {
-  id        String   @id @default(cuid())
-  agentId   String   @unique
-  name      String
-  tags      String   // JSON string array
+  id                String @id @default(cuid())
+  agentId           String @unique
+  name              String
+  tags              String // JSON string array
   createdAtUnixSecs Int
-  
+
   // Access info
-  isCreator     Boolean
-  creatorName   String
-  creatorEmail  String
-  creatorRole   String
-  
+  isCreator    Boolean
+  creatorName  String
+  creatorEmail String
+  creatorRole  String
+
   // Configuration (stored as JSON)
   conversationConfig String? // JSON
-  metadata          String? // JSON
-  platformSettings  String? // JSON
-  phoneNumbers      String? // JSON string array
-  
+  metadata           String? // JSON
+  platformSettings   String? // JSON
+  phoneNumbers       String? // JSON string array
+
   syncedAt  DateTime @default(now())
   adminId   String
   companyId String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   // Relations
   admin   User    @relation(fields: [adminId], references: [id], onDelete: Cascade)
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  
+
   @@index([companyId])
   @@index([adminId, companyId])
   @@index([agentId])
 }
 
 model PhoneNumber {
-  id          String   @id @default(cuid())
+  id          String @id @default(cuid())
   phoneNumber String
   label       String
-  provider    String   // twilio, sip_trunk
+  provider    String // twilio, sip_trunk
   companyId   String
-  
+
   // Provider specific data (JSON)
   providerData String?
-  
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   // Relations
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  
+
   @@index([companyId])
   @@index([phoneNumber])
 }
 
 model CompanyKnowledgeBase {
-  id                    String   @id @default(cuid())
-  companyId             String
-  elevenLabsDocumentId  String   // ID документа в ElevenLabs
-  documentName          String
-  documentType          String   // url, text, file
-  
+  id                   String @id @default(cuid())
+  companyId            String
+  elevenLabsDocumentId String // ID документа в ElevenLabs
+  documentName         String
+  documentType         String // url, text, file
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  createdBy String?   // ID пользователя, создавшего документ
-  
+  createdBy String? // ID пользователя, создавшего документ
+
   // Relations
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   creator User?   @relation("KnowledgeBaseCreator", fields: [createdBy], references: [id], onDelete: SetNull)
-  
+
   @@unique([companyId, elevenLabsDocumentId])
   @@index([companyId])
   @@index([elevenLabsDocumentId])

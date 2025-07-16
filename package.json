@@ -7,9 +7,12 @@
     "start": "node index",
     "dev": "nodemon index.ts",
     "build": "tsc",
-    "vercel-build": "prisma generate && tsc",
+    "vercel-build": "prisma migrate deploy && prisma generate && tsc",
     "postinstall": "prisma generate",
-    "migration": "npx ts-node src/scripts/migration.ts"
+    "migration": "npx ts-node src/scripts/migration.ts",
+    "db:migrate": "prisma migrate deploy",
+    "db:push": "prisma db push",
+    "db:reset": "prisma migrate reset --force"
   },
   "engines": {
     "node": ">=14.0.0"
